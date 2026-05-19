@@ -377,6 +377,7 @@ export class PgClient {
     let fields: FieldDescription[] = [];
     let sawNoData = false;
     let sawRowDesc = false;
+    let err: PgError | null = null;
     while (true) {
       const m = await this.next();
       if (m.type === "1") continue;
@@ -384,8 +385,9 @@ export class PgClient {
       if (m.type === "T") { fields = m.fields; sawRowDesc = true; continue; }
       if (m.type === "n") { sawNoData = true; continue; }
       if (m.type === "Z") break;
-      if (m.type === "E") throw pgError(m.fields);
+      if (m.type === "E") { err = pgError(m.fields); continue; }
     }
+    if (err) throw err;
     if (!sawRowDesc && !sawNoData) throw new Error("describe: neither RowDescription nor NoData");
     return { paramOids, fields };
   }
@@ -395,14 +397,16 @@ export class PgClient {
     const allRows: (Uint8Array | null)[][] = [];
     let lastFields: FieldDescription[] = [];
     const tags: string[] = [];
+    let err: PgError | null = null;
     while (true) {
       const m = await this.next();
       if (m.type === "T") lastFields = m.fields;
       else if (m.type === "D") allRows.push(m.columns);
       else if (m.type === "C") tags.push(m.tag);
       else if (m.type === "Z") break;
-      else if (m.type === "E") throw pgError(m.fields);
+      else if (m.type === "E") err = pgError(m.fields);
     }
+    if (err) throw err;
     return { rows: allRows, fields: lastFields, tags };
   }
 
@@ -411,14 +415,16 @@ export class PgClient {
     const rows: (Uint8Array | null)[][] = [];
     let fields: FieldDescription[] = [];
     let tag = "";
+    let err: PgError | null = null;
     while (true) {
       const m = await this.next();
       if (m.type === "T") fields = m.fields;
       else if (m.type === "D") rows.push(m.columns);
       else if (m.type === "C") tag = m.tag;
       else if (m.type === "Z") break;
-      else if (m.type === "E") throw pgError(m.fields);
+      else if (m.type === "E") err = pgError(m.fields);
     }
+    if (err) throw err;
     return { rows, fields, tag };
   }
 
