@@ -70,11 +70,17 @@ The runtime (`src/index.ts` + `src/runtime.ts`) is a thin layer over `Bun.SQL.un
 ### Running tests
 
 ```bash
-bun test                # unit tests (pure modules)
+bun test                # unit + integration tests
 bunx tsc -p example     # type-check the example fixture
 ```
 
-The example fixture in `example/` is the integration-test harness:
+The integration suite (`tests/prepare.integration.test.ts`) spins up an
+isolated PostgreSQL container via `@testcontainers/postgresql` using the
+`pgvector/pgvector:pg17` image (so `vector`, `hstore`, `citext`, `ltree`
+are available out of the box). It auto-skips when Docker is unreachable.
+Override the image with `BUN_SQLX_PG_IMAGE` if needed.
+
+The example fixture in `example/` is a separate end-to-end harness:
 
 ```bash
 bun bin/bun-sqlx.ts migrate run --root example

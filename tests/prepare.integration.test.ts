@@ -1,25 +1,25 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 
 const repoRoot = resolve(import.meta.dir, "..");
-const DB_URL = process.env.BUN_SQLX_TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/bun_sqlx_test";
+const tmp = join(repoRoot, "tests/.tmp-integration");
+const IMAGE = process.env.BUN_SQLX_PG_IMAGE ?? "pgvector/pgvector:pg17";
 
-function probeDb(): boolean {
-  const r = spawnSync("bun", [join(repoRoot, "bin/bun-sqlx.ts"), "migrate", "info", "--root", "/dev/null"], {
-    env: { ...process.env, DATABASE_URL: DB_URL },
-    encoding: "utf8",
-  });
-  return r.status === 0 || /no such file or directory|does not exist|migrations/i.test(`${r.stdout}${r.stderr}`);
+function dockerAvailable(): boolean {
+  const r = spawnSync("docker", ["info"], { encoding: "utf8" });
+  return r.status === 0;
 }
 
-const dbAvailable = probeDb();
+const haveDocker = dockerAvailable();
 
-if (!dbAvailable) {
-  test.skip("integration suite requires Postgres at BUN_SQLX_TEST_DATABASE_URL", () => {});
+if (!haveDocker) {
+  test.skip("integration suite requires Docker for testcontainers", () => {});
 } else {
-  const tmp = join(repoRoot, "tests/.tmp-integration");
+  let container: StartedPostgreSqlContainer;
+  let dbUrl: string;
 
   function writeFile(rel: string, content: string) {
     const full = join(tmp, rel);
@@ -31,12 +31,21 @@ if (!dbAvailable) {
     const r = spawnSync(
       "bun",
       [join(repoRoot, "bin/bun-sqlx.ts"), "prepare", "--root", tmp, ...args],
-      { env: { ...process.env, DATABASE_URL: DB_URL }, encoding: "utf8" },
+      { env: { ...process.env, DATABASE_URL: dbUrl }, encoding: "utf8" },
     );
     return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
   }
 
-  beforeAll(() => {
+  function migrate(): { code: number; stdout: string; stderr: string } {
+    const r = spawnSync(
+      "bun",
+      [join(repoRoot, "bin/bun-sqlx.ts"), "migrate", "run", "--root", tmp],
+      { env: { ...process.env, DATABASE_URL: dbUrl }, encoding: "utf8" },
+    );
+    return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  }
+
+  function resetWorkspace() {
     rmSync(tmp, { recursive: true, force: true });
     mkdirSync(tmp, { recursive: true });
     writeFile("package.json", '{"name":"tmp-integration","type":"module"}');
@@ -48,27 +57,25 @@ if (!dbAvailable) {
       ");\n",
     );
     writeFile("migrations/0001_init.down.sql", "DROP TABLE IF EXISTS tmp_users;\n");
+  }
 
-    const r = spawnSync(
-      "bun",
-      [join(repoRoot, "bin/bun-sqlx.ts"), "migrate", "run", "--root", tmp],
-      { env: { ...process.env, DATABASE_URL: DB_URL }, encoding: "utf8" },
-    );
-    if (r.status !== 0) {
-      throw new Error(`integration migrate failed: ${r.stderr}\n${r.stdout}`);
-    }
-  });
+  beforeAll(async () => {
+    container = await new PostgreSqlContainer(IMAGE)
+      .withDatabase("bun_sqlx_it")
+      .withUsername("postgres")
+      .withPassword("postgres")
+      .start();
+    dbUrl = `postgres://postgres:postgres@${container.getHost()}:${container.getMappedPort(5432)}/bun_sqlx_it`;
 
-  afterAll(() => {
+    resetWorkspace();
+    const r = migrate();
+    if (r.code !== 0) throw new Error(`integration migrate failed: ${r.stderr}\n${r.stdout}`);
+  }, 120_000);
+
+  afterAll(async () => {
     rmSync(tmp, { recursive: true, force: true });
-    spawnSync("bun", ["-e", `
-      import { SQL } from "bun";
-      const c = new SQL({ url: "${DB_URL}" });
-      await c.unsafe("DROP TABLE IF EXISTS tmp_users CASCADE", []);
-      await c.unsafe("DROP TABLE IF EXISTS _bun_sqlx_migrations CASCADE", []);
-      await c.close();
-    `], { encoding: "utf8", stdio: "ignore" });
-  });
+    if (container) await container.stop();
+  }, 60_000);
 
   test("prepare emits file:line:column on PG describe error", () => {
     writeFile("a.ts",
@@ -161,31 +168,12 @@ if (!dbAvailable) {
     expect(r.stderr + r.stdout).toMatch(/a\.ts:2:16.*nope\.sql/s);
   });
 
-  test("built-in extension types resolve via the registry (vector, hstore, citext, ltree)", () => {
-    const probe = spawnSync(
-      "bun",
-      ["-e", `
-        import { SQL } from "bun";
-        const c = new SQL({ url: "${DB_URL}" });
-        try {
-          await c.unsafe("CREATE EXTENSION IF NOT EXISTS vector", []);
-          await c.unsafe("CREATE EXTENSION IF NOT EXISTS hstore", []);
-          await c.unsafe("CREATE EXTENSION IF NOT EXISTS citext", []);
-          await c.unsafe("CREATE EXTENSION IF NOT EXISTS ltree", []);
-          process.stdout.write("ok");
-        } catch (e) {
-          process.stdout.write("nope: " + (e as Error).message);
-        }
-        await c.close();
-      `],
-      { encoding: "utf8" },
-    );
-    if (!probe.stdout?.startsWith("ok")) {
-      console.warn(`skipping extension integration: ${probe.stdout}`);
-      return;
-    }
-
+  test("built-in extension types resolve via the registry", () => {
     writeFile("migrations/0002_ext.up.sql",
+      "CREATE EXTENSION IF NOT EXISTS vector;\n" +
+      "CREATE EXTENSION IF NOT EXISTS hstore;\n" +
+      "CREATE EXTENSION IF NOT EXISTS citext;\n" +
+      "CREATE EXTENSION IF NOT EXISTS ltree;\n" +
       "CREATE TABLE IF NOT EXISTS tmp_ext (\n" +
       "  id BIGSERIAL PRIMARY KEY,\n" +
       "  embedding vector(3),\n" +
@@ -195,12 +183,8 @@ if (!dbAvailable) {
       ");\n",
     );
     writeFile("migrations/0002_ext.down.sql", "DROP TABLE IF EXISTS tmp_ext;\n");
-    const mig = spawnSync(
-      "bun",
-      [join(repoRoot, "bin/bun-sqlx.ts"), "migrate", "run", "--root", tmp],
-      { env: { ...process.env, DATABASE_URL: DB_URL }, encoding: "utf8" },
-    );
-    expect(mig.status).toBe(0);
+    const mig = migrate();
+    expect(mig.code).toBe(0);
 
     writeFile("a.ts",
       "import { sql } from \"bun-sqlx\";\n" +
@@ -215,20 +199,7 @@ if (!dbAvailable) {
     expect(dts).toContain('"path": string');
   });
 
-  test("user customTypes in bun-sqlx.config.ts override built-in defaults", () => {
-    const probe = spawnSync(
-      "bun",
-      ["-e", `
-        import { SQL } from "bun";
-        const c = new SQL({ url: "${DB_URL}" });
-        const res = await c.unsafe("SELECT 1 FROM pg_extension WHERE extname='vector'", []);
-        process.stdout.write(res.length > 0 ? "ok" : "skip");
-        await c.close();
-      `],
-      { encoding: "utf8" },
-    );
-    if (probe.stdout !== "ok") return;
-
+  test("user customTypes override built-in defaults", () => {
     writeFile("bun-sqlx.config.ts",
       "import type { BunSqlxConfig } from \"bun-sqlx\";\n" +
       "const c: BunSqlxConfig = { customTypes: { vector: \"Float32Array\" } };\n" +
@@ -242,6 +213,7 @@ if (!dbAvailable) {
     expect(r.code).toBe(0);
     const dts = readFileSync(join(tmp, "bun-sqlx.d.ts"), "utf8");
     expect(dts).toContain('"embedding": Float32Array | null');
+    rmSync(join(tmp, "bun-sqlx.config.ts"), { force: true });
   });
 
   test("domain types resolve to their base TS type", () => {
@@ -256,14 +228,9 @@ if (!dbAvailable) {
       "DROP TABLE IF EXISTS tmp_counters;\n" +
       "DROP DOMAIN IF EXISTS tmp_positive_int;\n",
     );
-    const mig = spawnSync(
-      "bun",
-      [join(repoRoot, "bin/bun-sqlx.ts"), "migrate", "run", "--root", tmp],
-      { env: { ...process.env, DATABASE_URL: DB_URL }, encoding: "utf8" },
-    );
-    expect(mig.status).toBe(0);
+    const mig = migrate();
+    expect(mig.code).toBe(0);
 
-    rmSync(join(tmp, "bun-sqlx.config.ts"), { force: true });
     writeFile("a.ts",
       "import { sql } from \"bun-sqlx\";\n" +
       "await sql(\"SELECT id, value FROM tmp_counters\");\n",
@@ -275,7 +242,6 @@ if (!dbAvailable) {
   });
 
   test("scanner recognizes sql.transaction callback param as sql-alias", () => {
-    writeFile("queries/by_id.sql", "SELECT id, name FROM tmp_users WHERE id = $1\n");
     writeFile("a.ts",
       "import { sql } from \"bun-sqlx\";\n" +
       "await sql.transaction(async (tx) => {\n" +
