@@ -19,14 +19,15 @@ const rows = await sql(
 ## Features
 
 - **Compile-time validation** against a live PostgreSQL via `Parse` + `Describe Statement` (no query execution).
-- **Precise nullability inference** through `libpg-query`: `JOIN` direction (LEFT/RIGHT/FULL), `COALESCE`, `CASE`, `COUNT`, expression propagation.
+- **Precise nullability inference** through `libpg-query`: `JOIN` direction (LEFT/RIGHT/FULL), `COALESCE`, `CASE`, `COUNT`, expression propagation. Parameters become `T | null` when wrapped in `COALESCE`/`NULLIF`/`IS [NOT] NULL`/`IS [NOT] DISTINCT FROM`, or when bound to a nullable column in `INSERT`/`UPDATE`.
 - **WHERE narrowing**: `IS NOT NULL`, equality, `IN`, `LIKE`, `BETWEEN` make columns non-null. Tracks `AND`/`OR` semantics.
 - **PostgreSQL enums** generated as TypeScript literal unions (read + write side).
 - **Schema-aware `jsonb`** via a `BunSqlxJson` global namespace and a config-driven column → type mapping. Works for both result columns and `INSERT`/`UPDATE`/`WHERE` parameters.
 - **Extension types out of the box**: `pgvector` (`vector`, `halfvec`, `sparsevec`), `hstore`, `citext`, `ltree`/`lquery`/`ltxtquery`. Add your own through `customTypes` config.
 - **Domains** resolve to their base TypeScript type (`CREATE DOMAIN email AS text` → `string`), including domains over extension types or other domains.
 - **Wide built-in type coverage**: numeric, text, date/time, UUID, json/jsonb, network (inet/cidr/macaddr/macaddr8), bit strings, ranges/multiranges, geometric, money, tsvector/tsquery, xml — and the matching array variants.
-- **External SQL files** via `sql.file("queries/foo.sql", ...)` — typed exactly like inline queries.
+- **External SQL files** via `sql.file("queries/foo.sql", ...)` — typed exactly like inline queries. Watch mode re-prepares on `.sql` edits too.
+- **One-row helpers**: `sql.one(...)` and `sql.optional(...)` (also on `sql.file` and inside transactions) — friendly with `noUncheckedIndexedAccess: true`.
 - **Typed transactions** via `sql.transaction(async tx => …)` — the `tx` callback parameter is recognized by the scanner, so queries inside the block keep full type checking.
 - **Sourcemap-accurate error reporting**: every prepare failure points to `file:line:column` of the originating `sql(...)` call site, with PG error code, position, and hint.
 - **Linear migrations** with hash tampering detection.
@@ -92,7 +93,7 @@ const users = await sql(
 bunx bun-sqlx prepare
 ```
 
-This generates `bun-sqlx.d.ts` next to your code. Add it to your `tsconfig.json` `include` if it isn't picked up automatically.
+This generates `bun-sqlx-env.d.ts` next to your code. Add it to your `tsconfig.json` `include` if it isn't picked up automatically. (Pre-`0.4.0` releases produced `bun-sqlx.d.ts`; delete the old file after upgrading. The new name avoids colliding with the package itself when `baseUrl: "."` is set.) Use `--dts <path>` to override the destination.
 
 ### 5. Dev loop with watch
 
@@ -131,6 +132,29 @@ const admins = await sql.file("queries/top_admins.sql", "admin", 5);
 ```
 
 File-backed queries are emitted into a separate `KnownFileQueries` interface; the path becomes the type key.
+
+### `sql.one(query, ...params)` and `sql.optional(query, ...params)`
+
+Convenience wrappers for single-row queries. `one` throws if the row count is not exactly 1; `optional` returns `null` for 0 rows and throws on more than 1. They keep working under `noUncheckedIndexedAccess: true` without `rows[0]!` patterns.
+
+```ts
+const user = await sql.one(`SELECT id, name FROM users WHERE id = $1`, 1n);
+// user: { id: bigint; name: string }
+
+const maybe = await sql.optional(`SELECT id FROM users WHERE email = $1`, "x@y");
+// maybe: { id: bigint } | null
+```
+
+Both forms also exist on `sql.file` (`sql.file.one("queries/by_id.sql", ...)`) and inside transactions.
+
+### Parameter nullability
+
+`prepare` infers param types as `T | null` when:
+
+- `$N` appears inside `COALESCE($N, …)`, `NULLIF($N, …)`, `IS [NOT] NULL`, or `IS [NOT] DISTINCT FROM` — these patterns are only meaningful when the parameter can be `null`.
+- `$N` is positionally bound in `INSERT … VALUES (…, $N, …)` or `UPDATE … SET col = $N` and the target column is nullable.
+
+`WHERE col = $N` stays non-null even if `col` is nullable: `col = NULL` is always false in SQL, so passing `null` from the caller would be a bug. Use `col IS NOT DISTINCT FROM $N` (or an `OR $N IS NULL` clause) when you want NULL semantics.
 
 ### `sql.transaction(fn)`
 
