@@ -1,7 +1,7 @@
 {
   "query": "SELECT id FROM users WHERE role = $1",
   "paramOids": [
-    116063
+    116138
   ],
   "paramTsTypes": [
     "\"admin\" | \"editor\" | \"viewer\""
@@ -16,5 +16,6 @@
       "forceNullable": false
     }
   ],
-  "hasResultSet": true
+  "hasResultSet": true,
+  "hasInline": true
 }

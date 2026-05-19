@@ -8,7 +8,7 @@ function help(): never {
   console.error(`bun-sqlx — compile-time-checked SQL for Bun + Postgres
 
 usage:
-  bun-sqlx prepare [--check | --watch] [--root <dir>]
+  bun-sqlx prepare [--check | --watch] [--root <dir>] [--no-prune]
   bun-sqlx migrate run | info | revert | add <name>
 
 env:
@@ -18,6 +18,7 @@ flags:
   --root <dir>     scan root (default: cwd)
   --check          offline mode: validate cache vs sources, no DB
   --watch          re-prepare on file change (persistent PG connection)
+  --no-prune       keep orphaned cache entries (default: remove)
 `);
   process.exit(2);
 }
@@ -43,7 +44,14 @@ if (cmd === "prepare") {
     console.error("DATABASE_URL is required for prepare (use --check for offline)");
     process.exit(2);
   }
-  const opts = { root, databaseUrl, cacheDir, dtsPath, check: flag("--check") };
+  const opts = {
+    root,
+    databaseUrl,
+    cacheDir,
+    dtsPath,
+    check: flag("--check"),
+    prune: !flag("--no-prune"),
+  };
   if (flag("--watch")) {
     if (flag("--check")) {
       console.error("--watch and --check are mutually exclusive");

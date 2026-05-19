@@ -25,12 +25,13 @@
     },
     {
       "name": "role",
-      "typeOid": 116063,
+      "typeOid": 116138,
       "tsType": "\"admin\" | \"editor\" | \"viewer\"",
       "nullable": false,
       "forceNonNull": false,
       "forceNullable": false
     }
   ],
-  "hasResultSet": true
+  "hasResultSet": true,
+  "hasInline": true
 }

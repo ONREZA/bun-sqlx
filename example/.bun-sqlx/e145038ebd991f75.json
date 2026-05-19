@@ -1,5 +1,5 @@
 {
-  "query": "SELECT id, bio FROM users WHERE bio IS NOT NULL AND id = $1",
+  "query": "SELECT id AS \"id!\", name AS \"name!\" FROM users WHERE id = $1",
   "paramOids": [
     20
   ],
@@ -12,15 +12,15 @@
       "typeOid": 20,
       "tsType": "bigint",
       "nullable": false,
-      "forceNonNull": false,
+      "forceNonNull": true,
       "forceNullable": false
     },
     {
-      "name": "bio",
+      "name": "name",
       "typeOid": 25,
       "tsType": "string",
       "nullable": false,
-      "forceNonNull": false,
+      "forceNonNull": true,
       "forceNullable": false
     }
   ],

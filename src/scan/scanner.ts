@@ -1,6 +1,6 @@
 import ts from "typescript";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 
 export type QueryCallSite = {
   file: string;
@@ -8,6 +8,8 @@ export type QueryCallSite = {
   column: number;
   query: string;
   paramCount: number;
+  kind: "inline" | "file";
+  sqlFilePath?: string;
 };
 
 const EXCLUDE_DIRS = new Set(["node_modules", ".git", ".bun-sqlx", "dist", "build", ".next"]);
@@ -54,31 +56,89 @@ export function scanFile(absPath: string, root: string): QueryCallSite[] {
   if (sqlAliases.size === 0) return [];
 
   const out: QueryCallSite[] = [];
-  const visit = (node: ts.Node) => {
+  const here = (node: ts.Node) => {
+    const { line, character } = source.getLineAndCharacterOfPosition(node.getStart(source));
+    return { line: line + 1, column: character + 1 };
+  };
+  const fileRel = relative(root, absPath);
+
+  const visit = (node: ts.Node, aliases: Set<string>) => {
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
-      if (ts.isIdentifier(callee) && sqlAliases.has(callee.text)) {
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        aliases.has(callee.expression.text) &&
+        ts.isIdentifier(callee.name) &&
+        callee.name.text === "transaction"
+      ) {
+        const fn = node.arguments[0];
+        if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) {
+          const param = fn.parameters[0];
+          if (param && ts.isIdentifier(param.name)) {
+            const inner = new Set(aliases);
+            inner.add(param.name.text);
+            visit(fn.body, inner);
+            return;
+          }
+        }
+      }
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        aliases.has(callee.expression.text) &&
+        ts.isIdentifier(callee.name) &&
+        callee.name.text === "file"
+      ) {
+        const first = node.arguments[0];
+        if (!first || !ts.isStringLiteralLike(first)) {
+          const pos = first ? here(first) : here(callee);
+          throw new Error(
+            `bun-sqlx: ${fileRel}:${pos.line}:${pos.column} — sql.file() requires a string literal path`,
+          );
+        }
+        const sqlPath = first.text;
+        const abs = resolve(dirname(absPath), sqlPath);
+        if (!existsSync(abs)) {
+          const pos = here(first);
+          throw new Error(
+            `bun-sqlx: ${fileRel}:${pos.line}:${pos.column} — sql.file path not found: ${sqlPath}`,
+          );
+        }
+        const query = readFileSync(abs, "utf8");
+        const pos = here(first);
+        out.push({
+          file: fileRel,
+          line: pos.line,
+          column: pos.column,
+          query,
+          paramCount: node.arguments.length - 1,
+          kind: "file",
+          sqlFilePath: relative(root, abs),
+        });
+      } else if (ts.isIdentifier(callee) && aliases.has(callee.text)) {
         const first = node.arguments[0];
         if (first && ts.isStringLiteralLike(first)) {
-          const { line, character } = source.getLineAndCharacterOfPosition(first.getStart(source));
+          const pos = here(first);
           out.push({
-            file: relative(root, absPath),
-            line: line + 1,
-            column: character + 1,
+            file: fileRel,
+            line: pos.line,
+            column: pos.column,
             query: first.text,
             paramCount: node.arguments.length - 1,
+            kind: "inline",
           });
         } else if (first) {
-          const { line, character } = source.getLineAndCharacterOfPosition(first.getStart(source));
+          const pos = here(first);
           throw new Error(
-            `bun-sqlx: ${relative(root, absPath)}:${line + 1}:${character + 1} — sql() requires a string literal as first argument`,
+            `bun-sqlx: ${fileRel}:${pos.line}:${pos.column} — sql() requires a string literal as first argument`,
           );
         }
       }
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, aliases));
   };
-  visit(source);
+  visit(source, sqlAliases);
   return out;
 }
 

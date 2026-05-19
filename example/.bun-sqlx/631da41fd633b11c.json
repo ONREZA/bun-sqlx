@@ -28,5 +28,6 @@
       "forceNullable": false
     }
   ],
-  "hasResultSet": true
+  "hasResultSet": true,
+  "hasInline": true
 }

@@ -3,12 +3,17 @@
 
 declare module "bun-sqlx" {
   interface KnownQueries {
+    "INSERT INTO posts (user_id, title) VALUES ($1, $2) RETURNING id AS \"id!\"": { params: [bigint, string]; row: { "id": bigint } };
     "INSERT INTO users (name, email, age) VALUES ($1, $2, $3) RETURNING id AS \"id!\", created_at AS \"created_at!\"": { params: [string, string, number]; row: { "id": bigint; "created_at": Date } };
+    "INSERT INTO users (name, email, role) VALUES ($1, $2, $3) RETURNING id AS \"id!\"": { params: [string, string, "admin" | "editor" | "viewer"]; row: { "id": bigint } };
     "INSERT INTO users (name, email, role) VALUES ($1, $2, $3) RETURNING id AS \"id!\", role AS \"role!\"": { params: [string, string, "admin" | "editor" | "viewer"]; row: { "id": bigint; "role": "admin" | "editor" | "viewer" } };
     "INSERT INTO users (name, email, settings) VALUES ($1, $2, $3) RETURNING id AS \"id!\"": { params: [string, string, BunSqlxJson.UserSettings]; row: { "id": bigint } };
+    "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id AS \"id!\"": { params: [string, string]; row: { "id": bigint } };
     "SELECT 1 AS one, 'literal'::text AS msg, now() AS ts FROM users LIMIT 1": { params: []; row: { "one": number; "msg": string; "ts": Date } };
+    "SELECT COUNT(*) AS \"n!\" FROM users": { params: []; row: { "n": bigint } };
     "SELECT COUNT(*) AS \"n!\" FROM users WHERE age >= $1": { params: [number]; row: { "n": bigint } };
     "SELECT COUNT(*) AS n FROM users": { params: []; row: { "n": bigint } };
+    "SELECT id AS \"id!\", name AS \"name!\" FROM users WHERE id = $1": { params: [bigint]; row: { "id": bigint; "name": string } };
     "SELECT id AS \"id!\", name AS \"name!\", email AS \"email!\", age, bio FROM users WHERE id = $1": { params: [bigint]; row: { "id": bigint; "name": string; "email": string; "age": number | null; "bio": string | null } };
     "SELECT id FROM users WHERE role = $1": { params: ["admin" | "editor" | "viewer"]; row: { "id": bigint } };
     "SELECT id, age FROM users WHERE age = $1": { params: [number]; row: { "id": bigint; "age": number } };
@@ -29,6 +34,11 @@ declare module "bun-sqlx" {
     "SELECT u.id AS user_id, u.name, p.title, p.published FROM users u LEFT JOIN posts p ON p.user_id = u.id WHERE u.id = $1": { params: [bigint]; row: { "user_id": bigint; "name": string; "title": string | null; "published": boolean | null } };
     "SELECT u.id, p.title, p.body FROM users u LEFT JOIN posts p ON p.user_id = u.id WHERE p.body IS NOT NULL AND u.id = $1": { params: [bigint]; row: { "id": bigint; "title": string | null; "body": string } };
     "UPDATE users SET settings = $1 WHERE id = $2 RETURNING id AS \"id!\", settings": { params: [BunSqlxJson.UserSettings, bigint]; row: { "id": bigint; "settings": BunSqlxJson.UserSettings | null } };
+  }
+
+  interface KnownFileQueries {
+    "queries/count_posts.sql": { params: [bigint]; row: { "n": bigint } };
+    "queries/get_users_by_role.sql": { params: ["admin" | "editor" | "viewer", number]; row: { "id": bigint; "name": string; "email": string } };
   }
 }
 

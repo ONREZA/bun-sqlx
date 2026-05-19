@@ -83,7 +83,17 @@ export type PrepareOptions = {
   cacheDir: string;
   dtsPath: string;
   check: boolean;
+  prune?: boolean;
 };
+
+function formatSite(s: QueryCallSite): string {
+  return `${s.file}:${s.line}:${s.column}`;
+}
+
+function snippet(query: string, max = 80): string {
+  const oneLine = query.replace(/\s+/g, " ").trim();
+  return oneLine.length > max ? oneLine.slice(0, max) + "…" : oneLine;
+}
 
 export type PrepareSession = {
   client: PgClient;
@@ -105,7 +115,7 @@ export async function prepareOnce(
   session: PrepareSession,
   log: (msg: string) => void = console.log,
   err: (msg: string) => void = console.error,
-): Promise<{ entries: number; failures: number }> {
+): Promise<{ entries: number; failures: number; pruned: number }> {
   const sites = scanProject(opts.root);
   log(`scanned: found ${sites.length} sql() call site(s)`);
 
@@ -131,15 +141,23 @@ export async function prepareOnce(
   const { client, schema, userCfg } = session;
 
   for (const { fp, query, sites: ss } of unique.values()) {
+    const site = ss[0]!;
     try {
       const d = await client.describe(query);
       raw.push({ fp, query, sites: ss, paramOids: d.paramOids, fields: d.fields });
     } catch (e) {
       failures++;
       if (e instanceof PgError) {
-        err(`  ✗ ${ss[0]!.file}:${ss[0]!.line} — ${e.message}${e.position ? ` (pos ${e.position})` : ""}`);
+        const extras: string[] = [];
+        if (e.position) extras.push(`pos ${e.position}`);
+        if (e.code) extras.push(`code ${e.code}`);
+        const tail = extras.length > 0 ? ` (${extras.join(", ")})` : "";
+        err(`  ✗ ${formatSite(site)} — describe failed: ${e.message}${tail}`);
+        if (e.hint) err(`      hint: ${e.hint}`);
+        err(`      query: ${snippet(query)}`);
       } else {
-        err(`  ✗ ${ss[0]!.file}:${ss[0]!.line} — ${(e as Error).message}`);
+        err(`  ✗ ${formatSite(site)} — describe failed: ${(e as Error).message}`);
+        err(`      query: ${snippet(query)}`);
       }
     }
   }
@@ -159,9 +177,26 @@ export async function prepareOnce(
 
   const analyses = new Map<string, Awaited<ReturnType<typeof analyzeQuery>>>();
   const paramMaps = new Map<string, ParamMap>();
+  const failedFps = new Set<string>();
   for (const r of raw) {
-    analyses.set(r.fp, await analyzeQuery(r.query, r.fields, schema));
-    paramMaps.set(r.fp, await buildParamMap(r.query));
+    const site = r.sites[0]!;
+    try {
+      analyses.set(r.fp, await analyzeQuery(r.query, r.fields, schema));
+    } catch (e) {
+      failures++;
+      failedFps.add(r.fp);
+      err(`  ✗ ${formatSite(site)} — analyze failed: ${(e as Error).message}`);
+      err(`      query: ${snippet(r.query)}`);
+      continue;
+    }
+    try {
+      paramMaps.set(r.fp, await buildParamMap(r.query));
+    } catch (e) {
+      failures++;
+      failedFps.add(r.fp);
+      err(`  ✗ ${formatSite(site)} — paramMap failed: ${(e as Error).message}`);
+      err(`      query: ${snippet(r.query)}`);
+    }
   }
 
   const unknownOids = new Set<number>();
@@ -173,8 +208,14 @@ export async function prepareOnce(
 
   const entries: CacheEntry[] = [];
   for (const r of raw) {
+    if (failedFps.has(r.fp)) continue;
     const analysis = analyses.get(r.fp)!;
     const paramMap = paramMaps.get(r.fp) ?? new Map();
+    const fileSites = r.sites.filter((s) => s.kind === "file");
+    const hasInline = r.sites.some((s) => s.kind !== "file");
+    const filePaths = fileSites.length > 0
+      ? Array.from(new Set(fileSites.map((s) => s.sqlFilePath!))).sort()
+      : undefined;
     const entry: CacheEntry = {
       query: r.query,
       paramOids: r.paramOids,
@@ -191,20 +232,23 @@ export async function prepareOnce(
         };
       }),
       hasResultSet: r.fields.length > 0,
+      hasInline,
+      ...(filePaths ? { filePaths } : {}),
     };
     cache.write(r.fp, entry);
     entries.push(entry);
     const nn = entry.columns.filter((c) => !(c.forceNonNull ? false : c.forceNullable ? true : c.nullable)).length;
-    log(`  ✓ ${r.sites[0]!.file}:${r.sites[0]!.line} → ${r.paramOids.length} param(s), ${r.fields.length} col(s) [${nn} non-null]`);
+    log(`  ✓ ${formatSite(r.sites[0]!)} → ${r.paramOids.length} param(s), ${r.fields.length} col(s) [${nn} non-null]`);
   }
 
-  const existingByFp = new Set(unique.keys());
-  for (const { fp } of cache.list()) {
-    if (!existingByFp.has(fp)) cache.remove(fp);
+  let pruned = 0;
+  if (opts.prune !== false) {
+    pruned = cache.prune(unique.keys()).length;
+    if (pruned > 0) log(`pruned ${pruned} orphaned cache entry/entries`);
   }
 
   emitDts(opts.dtsPath, entries);
-  return { entries: entries.length, failures };
+  return { entries: entries.length, failures, pruned };
 }
 
 export async function runPrepare(opts: PrepareOptions): Promise<void> {
@@ -223,8 +267,8 @@ export async function runPrepare(opts: PrepareOptions): Promise<void> {
     for (const { fp, query, sites: ss } of unique.values()) {
       if (!cache.has(fp)) {
         stale++;
-        console.error(`stale: ${ss[0]!.file}:${ss[0]!.line} — query not in cache`);
-        console.error(`       query: ${query.slice(0, 80)}...`);
+        console.error(`stale: ${formatSite(ss[0]!)} — query not in cache`);
+        console.error(`       query: ${snippet(query)}`);
       }
     }
     if (stale > 0) {

@@ -1,10 +1,10 @@
 {
-  "query": "SELECT COUNT(*) AS \"n!\" FROM users WHERE age >= $1",
+  "query": "SELECT COUNT(*) AS \"n!\" FROM posts WHERE user_id = $1\n",
   "paramOids": [
-    23
+    20
   ],
   "paramTsTypes": [
-    "number"
+    "bigint"
   ],
   "columns": [
     {
@@ -17,5 +17,8 @@
     }
   ],
   "hasResultSet": true,
-  "hasInline": true
+  "hasInline": false,
+  "filePaths": [
+    "queries/count_posts.sql"
+  ]
 }

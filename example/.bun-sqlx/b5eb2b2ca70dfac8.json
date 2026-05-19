@@ -1,11 +1,7 @@
 {
-  "query": "SELECT COUNT(*) AS \"n!\" FROM users WHERE age >= $1",
-  "paramOids": [
-    23
-  ],
-  "paramTsTypes": [
-    "number"
-  ],
+  "query": "SELECT COUNT(*) AS \"n!\" FROM users",
+  "paramOids": [],
+  "paramTsTypes": [],
   "columns": [
     {
       "name": "n",

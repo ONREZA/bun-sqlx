@@ -1,17 +1,19 @@
 {
-  "query": "SELECT COUNT(*) AS \"n!\" FROM users WHERE age >= $1",
+  "query": "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id AS \"id!\"",
   "paramOids": [
-    23
+    25,
+    25
   ],
   "paramTsTypes": [
-    "number"
+    "string",
+    "string"
   ],
   "columns": [
     {
-      "name": "n",
+      "name": "id",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": false,
+      "nullable": true,
       "forceNonNull": true,
       "forceNullable": false
     }

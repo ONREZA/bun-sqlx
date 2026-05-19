@@ -15,6 +15,8 @@ export type CacheEntry = {
     forceNullable: boolean;
   }[];
   hasResultSet: boolean;
+  hasInline?: boolean;
+  filePaths?: string[];
 };
 
 export function fingerprint(query: string): string {
@@ -57,5 +59,17 @@ export class Cache {
   remove(fp: string): void {
     const p = join(this.dir, `${fp}.json`);
     if (existsSync(p)) unlinkSync(p);
+  }
+
+  prune(keep: Iterable<string>): string[] {
+    const keepSet = new Set(keep);
+    const removed: string[] = [];
+    for (const { fp } of this.list()) {
+      if (!keepSet.has(fp)) {
+        this.remove(fp);
+        removed.push(fp);
+      }
+    }
+    return removed;
   }
 }

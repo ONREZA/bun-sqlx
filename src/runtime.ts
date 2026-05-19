@@ -1,4 +1,6 @@
 import { SQL } from "bun";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { PgClient, parseDatabaseUrl } from "./pg/wire";
 import { applyPending } from "./commands/migrate";
 
@@ -50,12 +52,57 @@ function renameRows(rows: unknown[]): unknown[] {
   return rows;
 }
 
-export const sql: AnyFn = (async (query: string, ...params: unknown[]) => {
-  const c = getClient();
-  const rows = await c.unsafe(query, params);
+async function runQuery(client: SQL, query: string, params: unknown[]): Promise<unknown[]> {
+  const rows = await client.unsafe(query, params);
   return renameRows(rows);
+}
+
+const sqlFileCache = new Map<string, string>();
+function loadSqlFile(path: string): string {
+  let s = sqlFileCache.get(path);
+  if (s !== undefined) return s;
+  s = readFileSync(resolve(process.cwd(), path), "utf8");
+  sqlFileCache.set(path, s);
+  return s;
+}
+
+export function clearSqlFileCache(): void {
+  sqlFileCache.clear();
+}
+
+type SqlCallable = AnyFn & { file: AnyFn };
+
+function makeBoundCallable(client: SQL): SqlCallable {
+  const fn: AnyFn = (async (query: string, ...params: unknown[]) => {
+    return runQuery(client, query, params);
+  }) as AnyFn;
+  (fn as SqlCallable).file = (async (path: string, ...params: unknown[]) => {
+    return runQuery(client, loadSqlFile(path), params);
+  }) as AnyFn;
+  return fn as SqlCallable;
+}
+
+type SqlRoot = SqlCallable & {
+  transaction: <R>(fn: (tx: SqlCallable) => Promise<R>) => Promise<R>;
+};
+
+const root: SqlRoot = (async (query: string, ...params: unknown[]) => {
+  return runQuery(getClient(), query, params);
+}) as SqlRoot;
+
+root.file = (async (path: string, ...params: unknown[]) => {
+  return runQuery(getClient(), loadSqlFile(path), params);
 }) as AnyFn;
 
+root.transaction = async <R>(fn: (tx: SqlCallable) => Promise<R>): Promise<R> => {
+  const c = getClient();
+  return (await c.begin(async (txClient) => {
+    const tx = makeBoundCallable(txClient);
+    return await fn(tx);
+  })) as R;
+};
+
+export const sql: SqlRoot = root;
 export const unsafe = sql;
 
 export type MigrateOptions = {

@@ -25,7 +25,7 @@
     },
     {
       "name": "status",
-      "typeOid": 116072,
+      "typeOid": 116148,
       "tsType": "\"draft\" | \"published\" | \"archived\"",
       "nullable": false,
       "forceNonNull": false,
@@ -41,7 +41,7 @@
     },
     {
       "name": "history",
-      "typeOid": 116062,
+      "typeOid": 116137,
       "tsType": "(\"admin\" | \"editor\" | \"viewer\")[]",
       "nullable": false,
       "forceNonNull": false,
@@ -49,12 +49,13 @@
     },
     {
       "name": "author_role",
-      "typeOid": 116063,
+      "typeOid": 116138,
       "tsType": "\"admin\" | \"editor\" | \"viewer\"",
       "nullable": false,
       "forceNonNull": false,
       "forceNullable": false
     }
   ],
-  "hasResultSet": true
+  "hasResultSet": true,
+  "hasInline": true
 }
