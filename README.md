@@ -27,7 +27,8 @@ const rows = await sql(
 - **Domains** resolve to their base TypeScript type (`CREATE DOMAIN email AS text` → `string`), including domains over extension types or other domains.
 - **Wide built-in type coverage**: numeric, text, date/time, UUID, json/jsonb, network (inet/cidr/macaddr/macaddr8), bit strings, ranges/multiranges, geometric, money, tsvector/tsquery, xml — and the matching array variants.
 - **External SQL files** via `sql.file("queries/foo.sql", ...)` — typed exactly like inline queries. Watch mode re-prepares on `.sql` edits too.
-- **One-row helpers**: `sql.one(...)` and `sql.optional(...)` (also on `sql.file` and inside transactions) — friendly with `noUncheckedIndexedAccess: true`.
+- **One-row helpers**: `sql.one(...)`, `sql.optional(...)`, `sql.file.one(...)`, `sql.file.optional(...)`, and the same chain on the `tx` callback — friendly with `noUncheckedIndexedAccess: true`. The scanner walks all of them.
+- **Array params** for `text[]`, `int[]`, etc. are auto-serialised to PostgreSQL array literals (`{a,b,c}`) at runtime — no more `string_to_array` workaround.
 - **Typed transactions** via `sql.transaction(async tx => …)` — the `tx` callback parameter is recognized by the scanner, so queries inside the block keep full type checking.
 - **Sourcemap-accurate error reporting**: every prepare failure points to `file:line:column` of the originating `sql(...)` call site, with PG error code, position, and hint.
 - **Linear migrations** with hash tampering detection.
@@ -145,7 +146,18 @@ const maybe = await sql.optional(`SELECT id FROM users WHERE email = $1`, "x@y")
 // maybe: { id: bigint } | null
 ```
 
-Both forms also exist on `sql.file` (`sql.file.one("queries/by_id.sql", ...)`) and inside transactions.
+Both forms also exist on `sql.file` (`sql.file.one("queries/by_id.sql", ...)`) and inside transactions (`tx.one(...)`, `tx.optional(...)`, `tx.file.one(...)`, `tx.file.optional(...)`). The scanner recognizes every chain — these call sites are added to `KnownQueries` / `KnownFileQueries` just like a plain `sql(...)`.
+
+### Array parameters
+
+JavaScript arrays passed to `text[]`, `int[]`, `uuid[]`, etc. are auto-encoded as PostgreSQL array literals before being sent. Strings containing commas, braces, quotes, or backslashes are escaped; `null` elements emit SQL `NULL`.
+
+```ts
+await sql("SELECT $1::text[] AS tags", ["alpha", "beta,gamma", "with \"quote\""]);
+// → $1 sent as {alpha,"beta,gamma","with \"quote\""}
+```
+
+Encoding only kicks in when every element is a primitive (`string` / `number` / `bigint` / `boolean` / `null`). Arrays containing objects pass through unchanged — that's the path for `jsonb` columns whose value is a JSON array (`attachments: BunSqlxJson.Attachment[]`). If you need to store a primitive JS array as `jsonb` (rare), pass `JSON.stringify(arr)` explicitly. `encodePgArrayLiteral(arr)` is exported if you need the literal yourself for `unsafe(...)`.
 
 ### Parameter nullability
 
