@@ -113,16 +113,23 @@ Releases are automated. The flow:
 3. **Review and merge the release PR.** release-please tags the merge commit `vX.Y.Z`.
 4. **Tag push triggers `publish.yml`**, which type-checks, tests, verifies version parity, and publishes to npm with provenance.
 
-Version bumps follow conventional-commits semantics:
+Version bumps follow **Rust-crate-style** pre-1.0 semver. While `version < 1.0.0`:
 
-| Commit type | Version impact (pre-1.0)        |
-|-------------|---------------------------------|
-| `feat:`     | minor (0.x.0 → 0.(x+1).0)       |
-| `fix:`      | minor (we treat fixes as visible features pre-1.0) |
-| `feat!:`    | major                           |
-| any         | patch via `fix:` only post-1.0 |
+| Commit type                 | Version impact         |
+|-----------------------------|------------------------|
+| `feat:`                     | minor (`0.x.y` → `0.(x+1).0`) |
+| `fix:`                      | patch (`0.x.y` → `0.x.(y+1)`) |
+| `feat!:` / `BREAKING CHANGE:` | minor (**not** major) |
 
-`bump-minor-pre-major: true` and `bump-patch-for-minor-pre-major: false` are set in `release-please-config.json`.
+Major (`1.0.0`) is never reached implicitly. To cut a `1.0.0`, add an explicit `Release-As: 1.0.0` trailer to a commit body:
+
+```
+feat: stabilize public API
+
+Release-As: 1.0.0
+```
+
+The same trailer works at any version to pin a release manually. `release-please-config.json` sets `bump-minor-pre-major: true` and `bump-patch-for-minor-pre-major: false` to encode this policy.
 
 ### Local git hooks
 
