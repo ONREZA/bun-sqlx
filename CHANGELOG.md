@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.0](https://github.com/ONREZA/bun-sqlx/compare/v0.1.0...v0.2.0) (2026-05-19)
+
+
+### Features
+
+* add sql.file, sql.transaction, source-mapped errors, and cache pruning ([a994494](https://github.com/ONREZA/bun-sqlx/commit/a994494f4c085b3fce6fd85ce63e11b70ecc7cf0))
+
+
+### Bug Fixes
+
+* drain PG wire protocol after ErrorResponse to keep connection healthy ([1e9cd88](https://github.com/ONREZA/bun-sqlx/commit/1e9cd8882726cdbd5909466bcaecbe67d4d57e05))
+
+
+### Documentation
+
+* document sql.file, sql.transaction, error reporting and prune flag ([640b440](https://github.com/ONREZA/bun-sqlx/commit/640b44043d5dec592a496fa3b68c7c3daafc1132))
+
+
+### Tests
+
+* add integration suite covering prepare errors, file queries, and tx scope ([1682711](https://github.com/ONREZA/bun-sqlx/commit/1682711b606b50225a8c4992a395a10c6a4dcf05))
+
 ## 0.1.0 (2026-05-19)
 
 
