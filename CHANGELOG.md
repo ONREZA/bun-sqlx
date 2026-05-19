@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/ONREZA/bun-sqlx/compare/v0.2.0...v0.3.0) (2026-05-19)
+
+
+### Features
+
+* typed Postgres extension types, domains, and wider OID coverage ([f4b4355](https://github.com/ONREZA/bun-sqlx/commit/f4b43551f07ed1f483b82a8aac29517eea487038))
+
+
+### Documentation
+
+* document extension type registry, customTypes config, and domains ([c6225f6](https://github.com/ONREZA/bun-sqlx/commit/c6225f6a52f6a1269b2af9d9b0c5a034a9eaff58))
+
+
+### Tests
+
+* run integration suite in an isolated Postgres container ([f1aa36b](https://github.com/ONREZA/bun-sqlx/commit/f1aa36bb0b7792dd8e2714f0bf013b6c49f38999))
+
 ## [0.2.0](https://github.com/ONREZA/bun-sqlx/compare/v0.1.0...v0.2.0) (2026-05-19)
 
 
