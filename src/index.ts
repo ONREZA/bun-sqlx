@@ -34,4 +34,5 @@ export const setClient = rt.setClient;
 export const close = rt.close;
 export const migrate = rt.migrate;
 export const clearSqlFileCache = rt.clearSqlFileCache;
+export const encodePgArrayLiteral = rt.encodePgArrayLiteral;
 export type MigrateOptions = rt.MigrateOptions;

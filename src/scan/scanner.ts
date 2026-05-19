@@ -31,6 +31,42 @@ export function findSourceFiles(root: string): string[] {
   return out;
 }
 
+type CalleeKind = "inline" | "file" | "transaction" | null;
+
+function classifyCallee(
+  callee: ts.LeftHandSideExpression,
+  aliases: Set<string>,
+): { alias: string; kind: Exclude<CalleeKind, null> } | null {
+  if (ts.isIdentifier(callee)) {
+    if (!aliases.has(callee.text)) return null;
+    return { alias: callee.text, kind: "inline" };
+  }
+
+  if (!ts.isPropertyAccessExpression(callee)) return null;
+  if (!ts.isIdentifier(callee.name)) return null;
+  const methodName = callee.name.text;
+
+  if (ts.isIdentifier(callee.expression)) {
+    const aliasName = callee.expression.text;
+    if (!aliases.has(aliasName)) return null;
+    if (methodName === "transaction") return { alias: aliasName, kind: "transaction" };
+    if (methodName === "file") return { alias: aliasName, kind: "file" };
+    if (methodName === "one" || methodName === "optional") return { alias: aliasName, kind: "inline" };
+    return null;
+  }
+
+  if (ts.isPropertyAccessExpression(callee.expression)) {
+    const mid = callee.expression;
+    if (!ts.isIdentifier(mid.expression) || !aliases.has(mid.expression.text)) return null;
+    if (!ts.isIdentifier(mid.name) || mid.name.text !== "file") return null;
+    if (methodName === "one" || methodName === "optional") {
+      return { alias: mid.expression.text, kind: "file" };
+    }
+  }
+
+  return null;
+}
+
 export function scanFile(absPath: string, root: string): QueryCallSite[] {
   const text = readFileSync(absPath, "utf8");
   const source = ts.createSourceFile(absPath, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TSX);
@@ -62,77 +98,75 @@ export function scanFile(absPath: string, root: string): QueryCallSite[] {
   };
   const fileRel = relative(root, absPath);
 
+  const recordInline = (first: ts.Node, args: ts.NodeArray<ts.Expression>): boolean => {
+    if (!ts.isStringLiteralLike(first)) {
+      const pos = here(first);
+      throw new Error(
+        `bun-sqlx: ${fileRel}:${pos.line}:${pos.column} — sql() requires a string literal as first argument`,
+      );
+    }
+    const pos = here(first);
+    out.push({
+      file: fileRel,
+      line: pos.line,
+      column: pos.column,
+      query: first.text,
+      paramCount: args.length - 1,
+      kind: "inline",
+    });
+    return true;
+  };
+
+  const recordFile = (first: ts.Node, args: ts.NodeArray<ts.Expression>, callee: ts.Node): boolean => {
+    if (!ts.isStringLiteralLike(first)) {
+      const pos = first ? here(first) : here(callee);
+      throw new Error(
+        `bun-sqlx: ${fileRel}:${pos.line}:${pos.column} — sql.file() requires a string literal path`,
+      );
+    }
+    const sqlPath = first.text;
+    const abs = resolve(dirname(absPath), sqlPath);
+    if (!existsSync(abs)) {
+      const pos = here(first);
+      throw new Error(
+        `bun-sqlx: ${fileRel}:${pos.line}:${pos.column} — sql.file path not found: ${sqlPath}`,
+      );
+    }
+    const query = readFileSync(abs, "utf8");
+    const pos = here(first);
+    out.push({
+      file: fileRel,
+      line: pos.line,
+      column: pos.column,
+      query,
+      paramCount: args.length - 1,
+      kind: "file",
+      sqlFilePath: relative(root, abs),
+    });
+    return true;
+  };
+
   const visit = (node: ts.Node, aliases: Set<string>) => {
     if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      if (
-        ts.isPropertyAccessExpression(callee) &&
-        ts.isIdentifier(callee.expression) &&
-        aliases.has(callee.expression.text) &&
-        ts.isIdentifier(callee.name) &&
-        callee.name.text === "transaction"
-      ) {
-        const fn = node.arguments[0];
-        if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) {
-          const param = fn.parameters[0];
-          if (param && ts.isIdentifier(param.name)) {
-            const inner = new Set(aliases);
-            inner.add(param.name.text);
-            visit(fn.body, inner);
-            return;
+      const classified = classifyCallee(node.expression, aliases);
+      if (classified) {
+        if (classified.kind === "transaction") {
+          const fn = node.arguments[0];
+          if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) {
+            const param = fn.parameters[0];
+            if (param && ts.isIdentifier(param.name)) {
+              const inner = new Set(aliases);
+              inner.add(param.name.text);
+              visit(fn.body, inner);
+              return;
+            }
           }
-        }
-      }
-      if (
-        ts.isPropertyAccessExpression(callee) &&
-        ts.isIdentifier(callee.expression) &&
-        aliases.has(callee.expression.text) &&
-        ts.isIdentifier(callee.name) &&
-        callee.name.text === "file"
-      ) {
-        const first = node.arguments[0];
-        if (!first || !ts.isStringLiteralLike(first)) {
-          const pos = first ? here(first) : here(callee);
-          throw new Error(
-            `bun-sqlx: ${fileRel}:${pos.line}:${pos.column} — sql.file() requires a string literal path`,
-          );
-        }
-        const sqlPath = first.text;
-        const abs = resolve(dirname(absPath), sqlPath);
-        if (!existsSync(abs)) {
-          const pos = here(first);
-          throw new Error(
-            `bun-sqlx: ${fileRel}:${pos.line}:${pos.column} — sql.file path not found: ${sqlPath}`,
-          );
-        }
-        const query = readFileSync(abs, "utf8");
-        const pos = here(first);
-        out.push({
-          file: fileRel,
-          line: pos.line,
-          column: pos.column,
-          query,
-          paramCount: node.arguments.length - 1,
-          kind: "file",
-          sqlFilePath: relative(root, abs),
-        });
-      } else if (ts.isIdentifier(callee) && aliases.has(callee.text)) {
-        const first = node.arguments[0];
-        if (first && ts.isStringLiteralLike(first)) {
-          const pos = here(first);
-          out.push({
-            file: fileRel,
-            line: pos.line,
-            column: pos.column,
-            query: first.text,
-            paramCount: node.arguments.length - 1,
-            kind: "inline",
-          });
-        } else if (first) {
-          const pos = here(first);
-          throw new Error(
-            `bun-sqlx: ${fileRel}:${pos.line}:${pos.column} — sql() requires a string literal as first argument`,
-          );
+        } else if (classified.kind === "file") {
+          const first = node.arguments[0];
+          if (first) recordFile(first, node.arguments, node.expression);
+        } else if (classified.kind === "inline") {
+          const first = node.arguments[0];
+          if (first) recordInline(first, node.arguments);
         }
       }
     }

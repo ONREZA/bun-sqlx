@@ -294,6 +294,51 @@ if (!haveDocker) {
     expect(dts).toMatch(/WHERE bio = \$1.*params: \[string\]/);
   });
 
+  test("sql.one and sql.optional reach KnownQueries via the scanner", () => {
+    writeFile("a.ts",
+      "import { sql } from \"bun-sqlx\";\n" +
+      "await sql.one(\"SELECT id FROM tmp_users WHERE id = $1\", 1);\n" +
+      "await sql.optional(\"SELECT id FROM tmp_users WHERE email = $1\", \"x\");\n",
+    );
+    const r = prepare();
+    expect(r.code).toBe(0);
+    const dts = readFileSync(join(tmp, "bun-sqlx-env.d.ts"), "utf8");
+    expect(dts).toContain("SELECT id FROM tmp_users WHERE id = $1");
+    expect(dts).toContain("SELECT id FROM tmp_users WHERE email = $1");
+  });
+
+  test("sql.file.one and sql.file.optional reach KnownFileQueries via the scanner", () => {
+    writeFile("queries/by_id.sql", "SELECT id, name FROM tmp_users WHERE id = $1\n");
+    writeFile("queries/by_email.sql", "SELECT id FROM tmp_users WHERE email = $1\n");
+    writeFile("a.ts",
+      "import { sql } from \"bun-sqlx\";\n" +
+      "await sql.file.one(\"./queries/by_id.sql\", 1);\n" +
+      "await sql.file.optional(\"./queries/by_email.sql\", \"x\");\n",
+    );
+    const r = prepare();
+    expect(r.code).toBe(0);
+    const dts = readFileSync(join(tmp, "bun-sqlx-env.d.ts"), "utf8");
+    expect(dts).toContain('"queries/by_id.sql":');
+    expect(dts).toContain('"queries/by_email.sql":');
+  });
+
+  test("text[] param roundtrips via PG array literal encoding", async () => {
+    const { SQL } = await import("bun");
+    const { setClient, sql, close } = await import("../src/index");
+    const client = new SQL({ url: dbUrl, bigint: true });
+    setClient(client);
+    try {
+      const rows = await sql("SELECT $1::text[] AS xs", ["alpha", "beta,gamma", "with \"quote\""]);
+      expect((rows[0] as { xs: string[] }).xs).toEqual(["alpha", "beta,gamma", "with \"quote\""]);
+      const ints = await sql("SELECT $1::int[] AS ns", [1, 2, 3]);
+      expect(Array.from((ints[0] as { ns: ArrayLike<number> }).ns)).toEqual([1, 2, 3]);
+      const withNull = await sql("SELECT $1::text[] AS xs", ["a", null, "b"]);
+      expect((withNull[0] as { xs: (string | null)[] }).xs).toEqual(["a", null, "b"]);
+    } finally {
+      await close();
+    }
+  });
+
   test("scanner recognizes sql.transaction callback param as sql-alias", () => {
     writeFile("a.ts",
       "import { sql } from \"bun-sqlx\";\n" +

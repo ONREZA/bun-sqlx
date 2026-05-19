@@ -54,8 +54,55 @@ function renameRows(rows: unknown[]): unknown[] {
   return rows;
 }
 
+function isPrimitiveArrayElement(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  const t = typeof v;
+  return t === "string" || t === "number" || t === "bigint" || t === "boolean";
+}
+
+function quoteArrayElement(raw: string): string {
+  return '"' + raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
+export function encodePgArrayLiteral(arr: unknown[]): string {
+  const parts: string[] = [];
+  for (const v of arr) {
+    if (v === null || v === undefined) {
+      parts.push("NULL");
+      continue;
+    }
+    if (typeof v === "bigint") {
+      parts.push(v.toString());
+      continue;
+    }
+    if (typeof v === "number") {
+      parts.push(Number.isFinite(v) ? String(v) : quoteArrayElement(String(v)));
+      continue;
+    }
+    if (typeof v === "boolean") {
+      parts.push(v ? "t" : "f");
+      continue;
+    }
+    const s = String(v);
+    if (s === "" || /[\\"{},\s]/.test(s) || s.toLowerCase() === "null") {
+      parts.push(quoteArrayElement(s));
+    } else {
+      parts.push(s);
+    }
+  }
+  return "{" + parts.join(",") + "}";
+}
+
+function encodeParam(p: unknown): unknown {
+  if (!Array.isArray(p)) return p;
+  if (p.length === 0) return "{}";
+  if (!p.every(isPrimitiveArrayElement)) return p;
+  return encodePgArrayLiteral(p);
+}
+
 async function runQuery(client: SQL, query: string, params: unknown[]): Promise<unknown[]> {
-  const rows = await client.unsafe(query, params);
+  const encoded = params.length === 0 ? params : params.map(encodeParam);
+  const rows = await client.unsafe(query, encoded);
   return renameRows(rows);
 }
 

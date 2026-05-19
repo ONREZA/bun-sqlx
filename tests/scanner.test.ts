@@ -139,3 +139,56 @@ test("aliased sql.file() works", () => {
   expect(sites).toHaveLength(1);
   expect(sites[0]!.kind).toBe("file");
 });
+
+test("sql.one and sql.optional are scanned as inline queries", () => {
+  setup({
+    "a.ts":
+      "import { sql } from \"bun-sqlx\";\n" +
+      "await sql.one(\"SELECT id FROM users WHERE id = $1\", 1);\n" +
+      "await sql.optional(\"SELECT name FROM users WHERE email = $1\", \"x\");\n",
+  });
+  const sites = scanProject(tmp).slice().sort((a, b) => a.line - b.line);
+  expect(sites).toHaveLength(2);
+  expect(sites[0]!.kind).toBe("inline");
+  expect(sites[0]!.query).toBe("SELECT id FROM users WHERE id = $1");
+  expect(sites[1]!.kind).toBe("inline");
+  expect(sites[1]!.query).toBe("SELECT name FROM users WHERE email = $1");
+});
+
+test("sql.file.one and sql.file.optional are scanned as file queries", () => {
+  setup({
+    "a.ts":
+      "import { sql } from \"bun-sqlx\";\n" +
+      "await sql.file.one(\"./q/by_id.sql\", 1);\n" +
+      "await sql.file.optional(\"./q/by_email.sql\", \"x\");\n",
+    "q/by_id.sql": "SELECT id FROM users WHERE id = $1\n",
+    "q/by_email.sql": "SELECT id FROM users WHERE email = $1\n",
+  });
+  const sites = scanProject(tmp).slice().sort((a, b) => a.line - b.line);
+  expect(sites).toHaveLength(2);
+  expect(sites[0]!.kind).toBe("file");
+  expect(sites[0]!.sqlFilePath).toBe("q/by_id.sql");
+  expect(sites[1]!.kind).toBe("file");
+  expect(sites[1]!.sqlFilePath).toBe("q/by_email.sql");
+});
+
+test("transaction tx.one / tx.optional / tx.file.one are scanned inside the callback", () => {
+  setup({
+    "a.ts":
+      "import { sql } from \"bun-sqlx\";\n" +
+      "await sql.transaction(async (tx) => {\n" +
+      "  await tx(\"SELECT 1 AS one\");\n" +
+      "  await tx.one(\"SELECT id FROM users WHERE id = $1\", 1);\n" +
+      "  await tx.optional(\"SELECT id FROM users WHERE email = $1\", \"x\");\n" +
+      "  await tx.file.one(\"./q/by_id.sql\", 1);\n" +
+      "});\n",
+    "q/by_id.sql": "SELECT id FROM users WHERE id = $1\n",
+  });
+  const sites = scanProject(tmp).slice().sort((a, b) => a.line - b.line);
+  expect(sites).toHaveLength(4);
+  expect(sites[0]!.query).toBe("SELECT 1 AS one");
+  expect(sites[1]!.query).toBe("SELECT id FROM users WHERE id = $1");
+  expect(sites[2]!.query).toBe("SELECT id FROM users WHERE email = $1");
+  expect(sites[3]!.kind).toBe("file");
+  expect(sites[3]!.sqlFilePath).toBe("q/by_id.sql");
+});
