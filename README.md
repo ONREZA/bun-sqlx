@@ -23,10 +23,14 @@ const rows = await sql(
 - **WHERE narrowing**: `IS NOT NULL`, equality, `IN`, `LIKE`, `BETWEEN` make columns non-null. Tracks `AND`/`OR` semantics.
 - **PostgreSQL enums** generated as TypeScript literal unions (read + write side).
 - **Schema-aware `jsonb`** via a `BunSqlxJson` global namespace and a config-driven column → type mapping. Works for both result columns and `INSERT`/`UPDATE`/`WHERE` parameters.
+- **External SQL files** via `sql.file("queries/foo.sql", ...)` — typed exactly like inline queries.
+- **Typed transactions** via `sql.transaction(async tx => …)` — the `tx` callback parameter is recognized by the scanner, so queries inside the block keep full type checking.
+- **Sourcemap-accurate error reporting**: every prepare failure points to `file:line:column` of the originating `sql(...)` call site, with PG error code, position, and hint.
 - **Linear migrations** with hash tampering detection.
 - **Runtime `migrate()`** with PostgreSQL advisory lock, safe for multi-replica startup.
 - **Offline cache** committed to your repo. CI verifies via `prepare --check` without a database.
 - **Watch mode**: ~15ms incremental re-prepare on file change.
+- **Cache pruning** removes orphaned entries automatically (toggleable with `--no-prune`).
 
 ## Install
 
@@ -102,13 +106,50 @@ Save a `.ts` file, types regenerate in milliseconds, your editor picks up change
 The typed query function. The first argument must be a string literal that exists in `KnownQueries` (populated by `prepare`).
 
 ```ts
-import { sql } from "bun-sqlx";
-
 const rows = await sql(`SELECT id FROM users WHERE name = $1`, "alice");
 //                      ^ literal — checked at compile time
 ```
 
 Unknown queries, wrong parameter types, and dynamic strings are compile errors. For genuinely dynamic SQL, use `unsafe`.
+
+### `sql.file(path, ...params)`
+
+Load SQL from an external file. The path is resolved against the source file at scan time (so `prepare` can read it), and against `process.cwd()` at runtime (so the running process can read it). Both must point at the same content.
+
+```ts
+// queries/top_admins.sql
+// SELECT id AS "id!", name AS "name!" FROM users WHERE role = $1 ORDER BY id LIMIT $2::int
+
+import { sql } from "bun-sqlx";
+
+const admins = await sql.file("queries/top_admins.sql", "admin", 5);
+//                                                       ^ string  ^ number
+// admins: { id: bigint; name: string }[]
+```
+
+File-backed queries are emitted into a separate `KnownFileQueries` interface; the path becomes the type key.
+
+### `sql.transaction(fn)`
+
+Wrap a function body in a database transaction. The callback receives a scoped `tx` that has the same typed `()` and `.file()` surface, but routes through the transaction's dedicated connection. The scanner recognises the callback parameter name and validates inner queries against `KnownQueries`.
+
+```ts
+import { sql } from "bun-sqlx";
+
+const { userId, postId } = await sql.transaction(async (tx) => {
+  const u = await tx(
+    `INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id AS "id!"`,
+    "Alice", "alice@example.com",
+  );
+  const p = await tx(
+    `INSERT INTO posts (user_id, title) VALUES ($1, $2) RETURNING id AS "id!"`,
+    u[0].id, "Hello",
+  );
+  return { userId: u[0].id, postId: p[0].id };
+});
+```
+
+If the callback throws, the transaction is rolled back. The return value of the callback becomes the return value of `transaction`.
 
 ### `unsafe(query, ...params)`
 
@@ -128,12 +169,16 @@ Options: `{ dir?: string; databaseUrl?: string; log?: (msg) => void }`.
 
 ### `getClient()` / `setClient()` / `close()`
 
-Low-level access to the underlying `Bun.SQL` instance, in case you need to manage the connection or use transactions directly.
+Low-level access to the underlying `Bun.SQL` instance, in case you need to manage the connection directly.
+
+### `clearSqlFileCache()`
+
+Drops the in-memory cache used by `sql.file(...)`. Call this if you reload `.sql` files at runtime (rare; useful in tests).
 
 ## CLI
 
 ```
-bun-sqlx prepare [--check | --watch] [--root <dir>]
+bun-sqlx prepare [--check | --watch] [--root <dir>] [--no-prune]
 bun-sqlx migrate run | info | revert | add <name>
 ```
 
@@ -142,8 +187,20 @@ bun-sqlx migrate run | info | revert | add <name>
 | `--check`      | Offline: verify cache matches sources, no database required. |
 | `--watch`      | Persistent connection, re-prepare on file change.            |
 | `--root <dir>` | Source/cache/migrations root (default: cwd).                 |
+| `--no-prune`   | Keep orphaned cache entries instead of removing them.        |
 
 `DATABASE_URL` must be set for any command that touches the database.
+
+### Error output
+
+When `prepare` fails, every diagnostic points back to the originating call site:
+
+```
+✗ src/users.ts:42:13 — describe failed: relation "userss" does not exist (pos 15, code 42P01)
+    query: SELECT * FROM userss WHERE id = $1
+```
+
+Phases reported separately: `describe failed`, `analyze failed`, `paramMap failed`. PostgreSQL `position`, `code`, and `hint` are surfaced when present.
 
 ## Configuration
 
@@ -195,7 +252,9 @@ A column that doesn't satisfy the above is `T | null`. You can override:
 
 - `SELECT id AS "id!"` → force non-null.
 - `SELECT id AS "id?"` → force nullable.
-- `WHERE col IS NOT NULL` / `WHERE col = ...` / `WHERE col IN (...)` → narrows `col` to non-null in the result.
+- `WHERE col IS NOT NULL` / `WHERE col = …` / `WHERE col IN (…)` → narrows `col` to non-null in the result.
+
+The runtime strips the `!`/`?` suffix from column keys so the row shape stays clean: `{ id: bigint }`, not `{ "id!": bigint }`.
 
 ## CI workflow
 
@@ -230,6 +289,7 @@ Releases are automated via `release-please`: pushes to `main` accumulate into a 
 - `SELECT *` falls back to conservative nullability.
 - `RETURNING` clauses on `INSERT`/`UPDATE`/`DELETE` use the basic nullability path (no `WHERE` narrowing yet). Use `AS "id!"` aliases.
 - Composite and domain types resolve to `unknown`. Use `CAST` or alias-based typing.
+- `sql.file(path)` path is matched literally between scan time and runtime — they must agree on the working directory. Document a convention for your team (e.g. always run from the repo root).
 
 See [ROADMAP.md](./ROADMAP.md) for what's planned.
 
