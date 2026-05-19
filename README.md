@@ -23,6 +23,9 @@ const rows = await sql(
 - **WHERE narrowing**: `IS NOT NULL`, equality, `IN`, `LIKE`, `BETWEEN` make columns non-null. Tracks `AND`/`OR` semantics.
 - **PostgreSQL enums** generated as TypeScript literal unions (read + write side).
 - **Schema-aware `jsonb`** via a `BunSqlxJson` global namespace and a config-driven column → type mapping. Works for both result columns and `INSERT`/`UPDATE`/`WHERE` parameters.
+- **Extension types out of the box**: `pgvector` (`vector`, `halfvec`, `sparsevec`), `hstore`, `citext`, `ltree`/`lquery`/`ltxtquery`. Add your own through `customTypes` config.
+- **Domains** resolve to their base TypeScript type (`CREATE DOMAIN email AS text` → `string`), including domains over extension types or other domains.
+- **Wide built-in type coverage**: numeric, text, date/time, UUID, json/jsonb, network (inet/cidr/macaddr/macaddr8), bit strings, ranges/multiranges, geometric, money, tsvector/tsquery, xml — and the matching array variants.
 - **External SQL files** via `sql.file("queries/foo.sql", ...)` — typed exactly like inline queries.
 - **Typed transactions** via `sql.transaction(async tx => …)` — the `tx` callback parameter is recognized by the scanner, so queries inside the block keep full type checking.
 - **Sourcemap-accurate error reporting**: every prepare failure points to `file:line:column` of the originating `sql(...)` call site, with PG error code, position, and hint.
@@ -239,6 +242,40 @@ export {};
 ```
 
 After re-running `prepare`, every `jsonb` column or parameter declared in `jsonbTypes` is checked against the corresponding TypeScript type.
+
+### Extension types and `customTypes`
+
+bun-sqlx ships with a built-in registry that resolves popular PostgreSQL extension types automatically:
+
+| `pg_type.typname` | TS type                            | Source extension |
+|-------------------|------------------------------------|-------------------|
+| `vector`          | `number[]`                         | pgvector          |
+| `halfvec`         | `number[]`                         | pgvector          |
+| `sparsevec`       | `string`                           | pgvector          |
+| `hstore`          | `Record<string, string \| null>`   | hstore            |
+| `citext`          | `string`                           | citext            |
+| `ltree`           | `string`                           | ltree             |
+| `lquery`          | `string`                           | ltree             |
+| `ltxtquery`       | `string`                           | ltree             |
+
+Add or override mappings via `customTypes` in `bun-sqlx.config.ts`. Keys are `pg_type.typname` values (the bare type name; namespacing isn't required):
+
+```ts
+import type { BunSqlxConfig } from "bun-sqlx";
+
+const config: BunSqlxConfig = {
+  customTypes: {
+    vector: "Float32Array",         // override pgvector default
+    geometry: "GeoJSON.Geometry",   // postgis (not built-in by design)
+    myapp_color: "`#${string}`",    // your own CREATE TYPE base/domain
+  },
+};
+export default config;
+```
+
+Domains resolve to their base type through `pg_type.typbasetype`. `CREATE DOMAIN positive_int AS integer CHECK (VALUE > 0)` → `number`, `CREATE DOMAIN tagged AS hstore` → `Record<string, string | null>`. Array variants of any registered scalar are also wired up automatically — `vector[]` → `(number[])[]`.
+
+Composite types (`CREATE TYPE foo AS (a int, b text)`) still resolve to `unknown`; see ROADMAP.
 
 ## How nullability is inferred
 
