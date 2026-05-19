@@ -1,0 +1,52 @@
+{
+  "query": "SELECT id AS \"id!\", name AS \"name!\", email AS \"email!\", age, bio FROM users WHERE id = $1",
+  "paramOids": [
+    20
+  ],
+  "paramTsTypes": [
+    "bigint"
+  ],
+  "columns": [
+    {
+      "name": "id",
+      "typeOid": 20,
+      "tsType": "bigint",
+      "nullable": false,
+      "forceNonNull": true,
+      "forceNullable": false
+    },
+    {
+      "name": "name",
+      "typeOid": 25,
+      "tsType": "string",
+      "nullable": false,
+      "forceNonNull": true,
+      "forceNullable": false
+    },
+    {
+      "name": "email",
+      "typeOid": 25,
+      "tsType": "string",
+      "nullable": false,
+      "forceNonNull": true,
+      "forceNullable": false
+    },
+    {
+      "name": "age",
+      "typeOid": 23,
+      "tsType": "number",
+      "nullable": true,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "bio",
+      "typeOid": 25,
+      "tsType": "string",
+      "nullable": true,
+      "forceNonNull": false,
+      "forceNullable": false
+    }
+  ],
+  "hasResultSet": true
+}

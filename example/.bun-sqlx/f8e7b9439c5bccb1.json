@@ -1,0 +1,36 @@
+{
+  "query": "SELECT u.id, p.title, p.body FROM users u LEFT JOIN posts p ON p.user_id = u.id WHERE p.body IS NOT NULL AND u.id = $1",
+  "paramOids": [
+    20
+  ],
+  "paramTsTypes": [
+    "bigint"
+  ],
+  "columns": [
+    {
+      "name": "id",
+      "typeOid": 20,
+      "tsType": "bigint",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "title",
+      "typeOid": 25,
+      "tsType": "string",
+      "nullable": true,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "body",
+      "typeOid": 25,
+      "tsType": "string",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    }
+  ],
+  "hasResultSet": true
+}

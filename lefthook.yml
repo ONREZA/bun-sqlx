@@ -1,0 +1,22 @@
+commit-msg:
+  commands:
+    cog-verify:
+      run: |
+        if command -v cog >/dev/null 2>&1; then
+          cog verify "$(cat {1})"
+        else
+          echo "lefthook: cocogitto (cog) is not installed; skipping conventional-commit check"
+          echo "  install: cargo install cocogitto  (or: brew install cocogitto)"
+        fi
+
+pre-commit:
+  parallel: true
+  commands:
+    typecheck:
+      glob: "*.{ts,tsx}"
+      run: bunx tsc --noEmit
+
+pre-push:
+  commands:
+    tests:
+      run: bun test tests

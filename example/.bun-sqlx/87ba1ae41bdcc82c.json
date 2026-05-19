@@ -1,0 +1,28 @@
+{
+  "query": "SELECT id, age FROM users WHERE age = $1",
+  "paramOids": [
+    23
+  ],
+  "paramTsTypes": [
+    "number"
+  ],
+  "columns": [
+    {
+      "name": "id",
+      "typeOid": 20,
+      "tsType": "bigint",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "age",
+      "typeOid": 23,
+      "tsType": "number",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    }
+  ],
+  "hasResultSet": true
+}

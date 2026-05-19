@@ -1,0 +1,30 @@
+{
+  "query": "UPDATE users SET settings = $1 WHERE id = $2 RETURNING id AS \"id!\", settings",
+  "paramOids": [
+    3802,
+    20
+  ],
+  "paramTsTypes": [
+    "BunSqlxJson.UserSettings",
+    "bigint"
+  ],
+  "columns": [
+    {
+      "name": "id",
+      "typeOid": 20,
+      "tsType": "bigint",
+      "nullable": true,
+      "forceNonNull": true,
+      "forceNullable": false
+    },
+    {
+      "name": "settings",
+      "typeOid": 3802,
+      "tsType": "BunSqlxJson.UserSettings",
+      "nullable": true,
+      "forceNonNull": false,
+      "forceNullable": false
+    }
+  ],
+  "hasResultSet": true
+}

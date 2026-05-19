@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "types": ["bun"],
+    "baseUrl": ".",
+    "paths": {
+      "bun-sqlx": ["../src/index.ts"]
+    }
+  },
+  "include": ["app.ts", "v2_nullability.ts", "v3_enums.ts", "v4_jsonb.ts", "v5_narrowing.ts", "v6_input_jsonb.ts", "json-types.d.ts", "bun-sqlx.d.ts"]
+}

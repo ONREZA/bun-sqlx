@@ -1,0 +1,60 @@
+{
+  "query": "SELECT p.id, p.title, p.status, p.tags, p.history, u.role AS author_role FROM posts p JOIN users u ON u.id = p.user_id WHERE p.id = $1",
+  "paramOids": [
+    20
+  ],
+  "paramTsTypes": [
+    "bigint"
+  ],
+  "columns": [
+    {
+      "name": "id",
+      "typeOid": 20,
+      "tsType": "bigint",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "title",
+      "typeOid": 25,
+      "tsType": "string",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "status",
+      "typeOid": 116072,
+      "tsType": "\"draft\" | \"published\" | \"archived\"",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "tags",
+      "typeOid": 1009,
+      "tsType": "(string)[]",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "history",
+      "typeOid": 116062,
+      "tsType": "(\"admin\" | \"editor\" | \"viewer\")[]",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "author_role",
+      "typeOid": 116063,
+      "tsType": "\"admin\" | \"editor\" | \"viewer\"",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    }
+  ],
+  "hasResultSet": true
+}

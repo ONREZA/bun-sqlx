@@ -1,0 +1,36 @@
+{
+  "query": "SELECT id, COALESCE(bio, 'none') AS bio_or_default, length(bio) AS bio_len FROM users WHERE bio IS NOT NULL AND id = $1",
+  "paramOids": [
+    20
+  ],
+  "paramTsTypes": [
+    "bigint"
+  ],
+  "columns": [
+    {
+      "name": "id",
+      "typeOid": 20,
+      "tsType": "bigint",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "bio_or_default",
+      "typeOid": 25,
+      "tsType": "string",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    },
+    {
+      "name": "bio_len",
+      "typeOid": 23,
+      "tsType": "number",
+      "nullable": false,
+      "forceNonNull": false,
+      "forceNullable": false
+    }
+  ],
+  "hasResultSet": true
+}
