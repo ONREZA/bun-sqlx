@@ -24,7 +24,7 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - id: release
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@c2a5a2bd6a758a0937f1ddb1e8950609867ed15c # v4.3.0
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
@@ -40,17 +40,36 @@ jobs:
     permissions:
       contents: read
       id-token: write
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bun_sqlx_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/bun_sqlx_test
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release-please.outputs.tag_name }}
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: latest
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -67,13 +86,26 @@ jobs:
       - name: Run unit tests
         run: bun test tests
 
+      - name: Migrate example schema
+        run: bun bin/bun-sqlx.ts migrate run --root example
+
+      - name: Prepare example
+        run: bun bin/bun-sqlx.ts prepare --root example
+
+      - name: Verify offline cache matches sources
+        run: bun bin/bun-sqlx.ts prepare --check --root example
+
+      - name: Type-check example
+        run: bunx tsc -p example
+
       - name: Build declarations (dist/)
         run: bun run build
 
       - name: Verify package.json version matches tag
+        env:
+          TAG_RAW: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release-please.outputs.tag_name }}
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
-          TAG_RAW="${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release-please.outputs.tag_name }}"
           TAG_VERSION="${TAG_RAW#v}"
           if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
             echo "package.json version ($PKG_VERSION) does not match tag ($TAG_VERSION)"
