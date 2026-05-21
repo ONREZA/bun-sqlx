@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0](https://github.com/ONREZA/bun-sqlx/compare/v0.4.1...v0.5.0) (2026-05-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* cache JSON written by prior versions is rejected on read; users must re-run \`bun-sqlx prepare\` to regenerate.
+
+### Features
+
+* cache override discriminator and degraded analysis surfacing ([5180fd9](https://github.com/ONREZA/bun-sqlx/commit/5180fd952cae8b10adf18231dd064ef5d87cbb7e))
+* harden wire protocol, runtime, and migrate; expose ConnectionLostError ([0c13f05](https://github.com/ONREZA/bun-sqlx/commit/0c13f05746b8fd19452c63407b9b2a183b6adcdb))
+
+
+### Bug Fixes
+
+* **scanner,watch:** track sql shadowing and normalize watcher paths ([acd8c5a](https://github.com/ONREZA/bun-sqlx/commit/acd8c5acc468575b4c1c2902fd12320d197f6a6b))
+
+
+### CI
+
+* pin Action SHAs, add Dependabot, prevent release shell-injection ([05a743c](https://github.com/ONREZA/bun-sqlx/commit/05a743cfe73ddc206504c40bc73e9647756a0585))
+
 ## [0.4.1](https://github.com/ONREZA/bun-sqlx/compare/v0.4.0...v0.4.1) (2026-05-19)
 
 
