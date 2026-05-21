@@ -14,49 +14,37 @@
       "name": "id",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "title",
       "typeOid": 25,
       "tsType": "string",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "status",
-      "typeOid": 116148,
+      "typeOid": 119432,
       "tsType": "\"draft\" | \"published\" | \"archived\"",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "tags",
       "typeOid": 1009,
       "tsType": "(string)[]",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "history",
-      "typeOid": 116137,
+      "typeOid": 119421,
       "tsType": "(\"admin\" | \"editor\" | \"viewer\")[]",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "author_role",
-      "typeOid": 116138,
+      "typeOid": 119422,
       "tsType": "\"admin\" | \"editor\" | \"viewer\"",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     }
   ],
   "hasResultSet": true,

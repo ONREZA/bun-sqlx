@@ -14,25 +14,19 @@
       "name": "id",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "name",
       "typeOid": 25,
       "tsType": "string",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "settings",
       "typeOid": 3802,
       "tsType": "BunSqlxJson.UserSettings",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     }
   ],
   "hasResultSet": true,

@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { CacheEntry } from "./cache";
+import { effectiveNullable, type CacheEntry } from "./cache";
 
 function entrySignature(e: CacheEntry): { params: string; row: string } {
   const paramTypes = e.paramTsTypes.map((t, i) => {
@@ -10,7 +10,7 @@ function entrySignature(e: CacheEntry): { params: string; row: string } {
   const params = paramTypes.length === 0 ? "[]" : `[${paramTypes.join(", ")}]`;
   if (!e.hasResultSet) return { params, row: "never" };
   const cols = e.columns.map((c) => {
-    const nullable = c.forceNonNull ? false : c.forceNullable ? true : c.nullable;
+    const nullable = effectiveNullable(c);
     const t = nullable ? `${c.tsType} | null` : c.tsType;
     return `${JSON.stringify(c.name)}: ${t}`;
   });
@@ -36,6 +36,7 @@ export function emitDts(outPath: string, entries: CacheEntry[]): void {
     if (inlineSeen.has(e.query)) continue;
     inlineSeen.add(e.query);
     const { params, row } = entrySignature(e);
+    if (e.degraded) lines.push(`    /** Nullability inference degraded: ${e.degraded.reason}. All result columns conservatively typed as nullable. */`);
     lines.push(`    ${JSON.stringify(e.query)}: { params: ${params}; row: ${row} };`);
   }
 
@@ -53,6 +54,7 @@ export function emitDts(outPath: string, entries: CacheEntry[]): void {
     if (filePathsSeen.has(path)) continue;
     filePathsSeen.add(path);
     const { params, row } = entrySignature(entry);
+    if (entry.degraded) lines.push(`    /** Nullability inference degraded: ${entry.degraded.reason}. */`);
     lines.push(`    ${JSON.stringify(path)}: { params: ${params}; row: ${row} };`);
   }
 

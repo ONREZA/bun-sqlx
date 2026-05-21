@@ -15,8 +15,7 @@
       "typeOid": 20,
       "tsType": "bigint",
       "nullable": false,
-      "forceNonNull": true,
-      "forceNullable": false
+      "override": "non-null"
     }
   ],
   "hasResultSet": true,

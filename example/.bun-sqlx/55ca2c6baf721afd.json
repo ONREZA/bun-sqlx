@@ -14,33 +14,25 @@
       "name": "id",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "title",
       "typeOid": 25,
       "tsType": "string",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "meta",
       "typeOid": 3802,
       "tsType": "BunSqlxJson.PostMeta",
-      "nullable": true,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": true
     },
     {
       "name": "attachments",
       "typeOid": 3807,
       "tsType": "(BunSqlxJson.Attachment)[]",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     }
   ],
   "hasResultSet": true,

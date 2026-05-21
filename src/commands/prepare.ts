@@ -4,7 +4,7 @@ import { SchemaCache, type CustomTypeInfo } from "../pg/schema";
 import { analyzeQuery } from "../pg/analyze";
 import { isBuiltinOid, oidToTs } from "../pg/oids";
 import { scanProject, type QueryCallSite } from "../scan/scanner";
-import { Cache, fingerprint, type CacheEntry } from "../cache";
+import { Cache, fingerprint, effectiveNullable, type CacheEntry } from "../cache";
 import { emitDts } from "../codegen";
 import { loadConfig, lookupJsonbType, type BunSqlxConfig } from "../config";
 import { buildParamMap, type ParamMap, type ParamMapResult } from "../pg/param-map";
@@ -88,14 +88,16 @@ function resolveParamNullable(
 
 const ALIAS_OVERRIDE = /^(.+?)([!?])$/;
 
-function parseColumnOverride(name: string): { name: string; forceNonNull: boolean; forceNullable: boolean } {
+function parseColumnOverride(name: string): { name: string; override?: "non-null" | "nullable" } {
   const m = ALIAS_OVERRIDE.exec(name);
-  if (!m) return { name, forceNonNull: false, forceNullable: false };
-  return {
-    name: m[1]!,
-    forceNonNull: m[2] === "!",
-    forceNullable: m[2] === "?",
-  };
+  if (!m) return { name };
+  return { name: m[1]!, override: m[2] === "!" ? "non-null" : "nullable" };
+}
+
+function isAliasOrExpression(f: FieldDescription, schema: SchemaCache): boolean {
+  if (f.tableOid === 0 || f.columnAttr === 0) return true;
+  const real = schema.columnNameByAttno(f.tableOid, f.columnAttr);
+  return real !== undefined && real !== f.name;
 }
 
 export type PrepareOptions = {
@@ -270,23 +272,25 @@ export async function prepareOnce(
       paramNullable: r.paramOids.map((_o, idx) => resolveParamNullable(idx + 1, pm, schema)),
       columns: r.fields.map((f, i) => {
         const parsed = parseColumnOverride(f.name);
+        const treatAsOverride = parsed.override !== undefined && isAliasOrExpression(f, schema);
         return {
           name: parsed.name,
           typeOid: f.typeOid,
           tsType: resolveColumnTs(f, schema, userCfg),
           nullable: analysis.perColumnNullable[i] ?? true,
-          forceNonNull: parsed.forceNonNull,
-          forceNullable: parsed.forceNullable,
+          ...(treatAsOverride ? { override: parsed.override } : {}),
         };
       }),
       hasResultSet: r.fields.length > 0,
       hasInline,
       ...(filePaths ? { filePaths } : {}),
+      ...(analysis.degraded ? { degraded: analysis.degraded } : {}),
     };
     cache.write(r.fp, entry);
     entries.push(entry);
-    const nn = entry.columns.filter((c) => !(c.forceNonNull ? false : c.forceNullable ? true : c.nullable)).length;
-    log(`  ✓ ${formatSite(r.sites[0]!)} → ${r.paramOids.length} param(s), ${r.fields.length} col(s) [${nn} non-null]`);
+    const nn = entry.columns.filter((c) => !effectiveNullable(c)).length;
+    const tag = entry.degraded ? ` [degraded: ${entry.degraded.reason}]` : "";
+    log(`  ✓ ${formatSite(r.sites[0]!)} → ${r.paramOids.length} param(s), ${r.fields.length} col(s) [${nn} non-null]${tag}`);
   }
 
   let pruned = 0;

@@ -14,17 +14,13 @@
       "name": "uid",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": true,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": true
     },
     {
       "name": "pid",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": true,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": true
     }
   ],
   "hasResultSet": true,

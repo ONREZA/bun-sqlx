@@ -14,17 +14,13 @@
       "name": "id",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "age",
       "typeOid": 23,
       "tsType": "number",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     }
   ],
   "hasResultSet": true,

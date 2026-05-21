@@ -5,7 +5,8 @@ import { narrowFromWhere, isNarrowed, type NonNullSet } from "./narrow";
 
 type AliasInfo =
   | { kind: "table"; schema?: string; relname: string; joinNullable: boolean }
-  | { kind: "subquery"; joinNullable: boolean }
+  | { kind: "subquery"; joinNullable: boolean; columns: Map<string, boolean> }
+  | { kind: "cte"; joinNullable: boolean; columns: Map<string, boolean> }
   | { kind: "function"; joinNullable: boolean };
 
 type Scope = {
@@ -15,11 +16,13 @@ type Scope = {
   hasStar: boolean;
   schema: SchemaCache;
   forcedNonNull: NonNullSet;
+  cteColumnInfo: Map<string, Map<string, boolean>>;
 };
 
 export type AnalysisResult = {
   perColumnNullable: boolean[];
   referencedTables: { schema?: string; name: string }[];
+  degraded?: { reason: string };
 };
 
 export async function analyzeQuery(
@@ -29,15 +32,79 @@ export async function analyzeQuery(
 ): Promise<AnalysisResult> {
   const ast = await parse(sql);
   const stmt = ast?.stmts?.[0]?.stmt;
-  const select = stmt?.SelectStmt;
+  if (!stmt) return conservative(rowDesc, "libpg-query returned no statements");
 
-  if (!select || !select.targetList || !select.fromClause) {
-    return {
-      perColumnNullable: rowDesc.map(() => true),
-      referencedTables: [],
-    };
+  if (stmt.SelectStmt) {
+    return await analyzeSelect(stmt.SelectStmt, rowDesc, schema);
   }
+  if (stmt.InsertStmt) {
+    return await analyzeDml(stmt.InsertStmt, rowDesc, schema, "insert");
+  }
+  if (stmt.UpdateStmt) {
+    return await analyzeDml(stmt.UpdateStmt, rowDesc, schema, "update");
+  }
+  if (stmt.DeleteStmt) {
+    return await analyzeDml(stmt.DeleteStmt, rowDesc, schema, "delete");
+  }
+  const kind = Object.keys(stmt)[0] ?? "unknown";
+  return conservative(rowDesc, `unsupported statement type: ${kind}`);
+}
 
+function conservative(rowDesc: FieldDescription[], reason?: string): AnalysisResult {
+  return {
+    perColumnNullable: rowDesc.map(() => true),
+    referencedTables: [],
+    ...(reason && rowDesc.length > 0 ? { degraded: { reason } } : {}),
+  };
+}
+
+async function analyzeSelect(
+  select: any,
+  rowDesc: FieldDescription[],
+  schema: SchemaCache,
+): Promise<AnalysisResult> {
+  if (!select.targetList || !select.fromClause) {
+    if (select.targetList && !select.fromClause) {
+      const scope = await buildScope(select, schema);
+      return runTargets(select.targetList, rowDesc, scope);
+    }
+    return conservative(rowDesc, "SELECT without targetList");
+  }
+  const scope = await buildScope(select, schema);
+  return runTargets(select.targetList, rowDesc, scope);
+}
+
+async function analyzeDml(
+  stmt: any,
+  rowDesc: FieldDescription[],
+  schema: SchemaCache,
+  kind: "insert" | "update" | "delete",
+): Promise<AnalysisResult> {
+  const returningList = stmt.returningList ?? [];
+  if (returningList.length === 0 && rowDesc.length === 0) {
+    return { perColumnNullable: [], referencedTables: tablesFromRelation(stmt.relation) };
+  }
+  const fakeSelect: any = {
+    targetList: returningList,
+    fromClause: [{ RangeVar: stmt.relation }],
+    whereClause: kind === "update" || kind === "delete" ? stmt.whereClause : undefined,
+    withClause: stmt.withClause,
+  };
+  if (kind === "update" && Array.isArray(stmt.fromClause)) {
+    fakeSelect.fromClause = [{ RangeVar: stmt.relation }, ...stmt.fromClause];
+  }
+  const scope = await buildScope(fakeSelect, schema);
+  return runTargets(returningList, rowDesc, scope);
+}
+
+function tablesFromRelation(relation: any): { schema?: string; name: string }[] {
+  if (!relation || typeof relation.relname !== "string") return [];
+  const out: { schema?: string; name: string } = { name: relation.relname };
+  if (relation.schemaname) out.schema = relation.schemaname;
+  return [out];
+}
+
+async function buildScope(select: any, schema: SchemaCache): Promise<Scope> {
   const scope: Scope = {
     aliases: new Map(),
     aliasOidByName: new Map(),
@@ -45,20 +112,33 @@ export async function analyzeQuery(
     hasStar: false,
     schema,
     forcedNonNull: narrowFromWhere(select.whereClause),
+    cteColumnInfo: new Map(),
   };
-  for (const entry of select.fromClause) {
+
+  if (select.withClause?.ctes) {
+    for (const cteWrap of select.withClause.ctes) {
+      const cte = cteWrap?.CommonTableExpr;
+      if (!cte) continue;
+      const name: string | undefined = cte.ctename;
+      if (!name) continue;
+      const colsInfo = await analyzeCteColumns(cte, schema);
+      scope.cteColumnInfo.set(name, colsInfo);
+    }
+  }
+
+  for (const entry of select.fromClause ?? []) {
     walkFrom(entry, false, scope);
   }
-  for (const t of select.targetList) {
-    if (containsStar(t.ResTarget?.val)) scope.hasStar = true;
+  for (const t of select.targetList ?? []) {
+    if (containsStar(t?.ResTarget?.val)) scope.hasStar = true;
   }
 
   const referencedTables: { schema?: string; name: string }[] = [];
   for (const a of scope.aliases.values()) {
     if (a.kind === "table") referencedTables.push({ schema: a.schema, name: a.relname });
   }
-
   await schema.loadTableNames(referencedTables);
+
   const allOids: number[] = [];
   for (const [aliasName, a] of scope.aliases) {
     if (a.kind !== "table") continue;
@@ -72,13 +152,68 @@ export async function analyzeQuery(
   }
   await schema.loadColumnsForTables(allOids);
 
-  const nullables = new Array<boolean>(rowDesc.length).fill(true);
-  const targets = select.targetList;
+  return scope;
+}
 
+async function analyzeCteColumns(cte: any, schema: SchemaCache): Promise<Map<string, boolean>> {
+  const result = new Map<string, boolean>();
+  const explicitColNames: string[] | undefined = Array.isArray(cte.aliascolnames)
+    ? cte.aliascolnames.map((n: any) => n?.String?.sval).filter((s: any) => typeof s === "string")
+    : undefined;
+
+  const inner = cte.ctequery?.SelectStmt
+    ?? cte.ctequery?.InsertStmt
+    ?? cte.ctequery?.UpdateStmt
+    ?? cte.ctequery?.DeleteStmt;
+  if (!inner) return result;
+
+  let targetList: any[] | undefined;
+  if (cte.ctequery?.SelectStmt) {
+    targetList = inner.targetList;
+  } else {
+    targetList = inner.returningList ?? [];
+  }
+  if (!Array.isArray(targetList) || targetList.length === 0) return result;
+
+  const isSelect = !!cte.ctequery?.SelectStmt;
+  const scope = isSelect
+    ? await buildScope(inner, schema)
+    : await buildScope(
+        {
+          targetList,
+          fromClause: [{ RangeVar: inner.relation }],
+          whereClause: inner.whereClause,
+        },
+        schema,
+      );
+
+  for (let i = 0; i < targetList.length; i++) {
+    const t = targetList[i];
+    const explicit = explicitColNames?.[i];
+    const colName = explicit ?? t?.ResTarget?.name ?? colNameOfColumnRef(t?.ResTarget?.val) ?? `?column?${i}`;
+    const isStar = containsStar(t?.ResTarget?.val);
+    if (isStar) continue;
+    const nullable = computeTargetNullable(t, scope);
+    result.set(colName, nullable);
+  }
+  return result;
+}
+
+function runTargets(
+  targets: any[],
+  rowDesc: FieldDescription[],
+  scope: Scope,
+): AnalysisResult {
+  const referencedTables: { schema?: string; name: string }[] = [];
+  for (const a of scope.aliases.values()) {
+    if (a.kind === "table") referencedTables.push({ schema: a.schema, name: a.relname });
+  }
+
+  const nullables = new Array<boolean>(rowDesc.length).fill(true);
   if (scope.hasStar || targets.length !== rowDesc.length) {
     for (let i = 0; i < rowDesc.length; i++) {
       const f = rowDesc[i]!;
-      nullables[i] = nullableFromRowDescConservative(f, scope, schema);
+      nullables[i] = nullableFromRowDescConservative(f, scope);
     }
     return { perColumnNullable: nullables, referencedTables };
   }
@@ -94,7 +229,7 @@ export async function analyzeQuery(
         nullables[i] = false;
         continue;
       }
-      const notNull = schema.isNotNull(f.tableOid, f.columnAttr);
+      const notNull = scope.schema.isNotNull(f.tableOid, f.columnAttr);
       let joinNullable: boolean;
       if (aliasName && scope.aliases.has(aliasName)) {
         joinNullable = scope.aliases.get(aliasName)!.joinNullable;
@@ -109,9 +244,14 @@ export async function analyzeQuery(
   return { perColumnNullable: nullables, referencedTables };
 }
 
-function nullableFromRowDescConservative(f: FieldDescription, scope: Scope, schema: SchemaCache): boolean {
+function computeTargetNullable(target: any, scope: Scope): boolean {
+  const val = target?.ResTarget?.val;
+  return expressionNullable(val, scope);
+}
+
+function nullableFromRowDescConservative(f: FieldDescription, scope: Scope): boolean {
   if (f.tableOid === 0 || f.columnAttr === 0) return true;
-  const notNull = schema.isNotNull(f.tableOid, f.columnAttr);
+  const notNull = scope.schema.isNotNull(f.tableOid, f.columnAttr);
   if (notNull !== true) return true;
   return anyAliasNullableForOid(f.tableOid, scope);
 }
@@ -127,12 +267,18 @@ function walkFrom(node: any, joinNullable: boolean, scope: Scope): void {
   if (node.RangeVar) {
     const v = node.RangeVar;
     const alias = v.alias?.aliasname ?? v.relname;
-    scope.aliases.set(alias, {
+    const cteCols = scope.cteColumnInfo.get(v.relname);
+    if (cteCols) {
+      scope.aliases.set(alias, { kind: "cte", joinNullable, columns: cteCols });
+      return;
+    }
+    const info: AliasInfo = {
       kind: "table",
-      schema: v.schemaname || undefined,
       relname: v.relname,
       joinNullable,
-    });
+    };
+    if (v.schemaname) (info as { schema?: string }).schema = v.schemaname;
+    scope.aliases.set(alias, info);
     return;
   }
   if (node.JoinExpr) {
@@ -157,7 +303,7 @@ function walkFrom(node: any, joinNullable: boolean, scope: Scope): void {
   }
   if (node.RangeSubselect) {
     const alias = node.RangeSubselect.alias?.aliasname;
-    if (alias) scope.aliases.set(alias, { kind: "subquery", joinNullable });
+    if (alias) scope.aliases.set(alias, { kind: "subquery", joinNullable, columns: new Map() });
     return;
   }
   if (node.RangeFunction) {
@@ -207,6 +353,11 @@ function columnRefNullable(fields: any[], scope: Scope): boolean {
   if (aliasName) {
     const a = scope.aliases.get(aliasName);
     if (!a) return true;
+    if (a.kind === "cte" || a.kind === "subquery") {
+      const inner = a.columns.get(colName);
+      if (inner === undefined) return true;
+      return inner || a.joinNullable;
+    }
     if (a.kind !== "table") return true;
     const oid = scope.aliasOidByName.get(aliasName);
     if (oid === undefined) return true;
@@ -218,6 +369,12 @@ function columnRefNullable(fields: any[], scope: Scope): boolean {
 
   const matches: { alias: string; notNull: boolean; joinNullable: boolean }[] = [];
   for (const [name, a] of scope.aliases) {
+    if (a.kind === "cte" || a.kind === "subquery") {
+      const inner = a.columns.get(colName);
+      if (inner === undefined) continue;
+      matches.push({ alias: name, notNull: !inner, joinNullable: a.joinNullable });
+      continue;
+    }
     if (a.kind !== "table") continue;
     const oid = scope.aliasOidByName.get(name);
     if (oid === undefined) continue;

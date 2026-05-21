@@ -14,25 +14,19 @@
       "name": "id",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "title",
       "typeOid": 25,
       "tsType": "string",
-      "nullable": true,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": true
     },
     {
       "name": "body",
       "typeOid": 25,
       "tsType": "string",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     }
   ],
   "hasResultSet": true,

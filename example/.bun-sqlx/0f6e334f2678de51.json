@@ -15,40 +15,33 @@
       "typeOid": 20,
       "tsType": "bigint",
       "nullable": false,
-      "forceNonNull": true,
-      "forceNullable": false
+      "override": "non-null"
     },
     {
       "name": "name",
       "typeOid": 25,
       "tsType": "string",
       "nullable": false,
-      "forceNonNull": true,
-      "forceNullable": false
+      "override": "non-null"
     },
     {
       "name": "email",
       "typeOid": 25,
       "tsType": "string",
       "nullable": false,
-      "forceNonNull": true,
-      "forceNullable": false
+      "override": "non-null"
     },
     {
       "name": "age",
       "typeOid": 23,
       "tsType": "number",
-      "nullable": true,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": true
     },
     {
       "name": "bio",
       "typeOid": 25,
       "tsType": "string",
-      "nullable": true,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": true
     }
   ],
   "hasResultSet": true,

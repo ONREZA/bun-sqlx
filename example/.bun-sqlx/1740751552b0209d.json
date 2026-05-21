@@ -3,7 +3,7 @@
   "paramOids": [
     25,
     25,
-    116138
+    119422
   ],
   "paramTsTypes": [
     "string",
@@ -20,17 +20,15 @@
       "name": "id",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": true,
-      "forceNonNull": true,
-      "forceNullable": false
+      "nullable": false,
+      "override": "non-null"
     },
     {
       "name": "role",
-      "typeOid": 116138,
+      "typeOid": 119422,
       "tsType": "\"admin\" | \"editor\" | \"viewer\"",
-      "nullable": true,
-      "forceNonNull": true,
-      "forceNullable": false
+      "nullable": false,
+      "override": "non-null"
     }
   ],
   "hasResultSet": true,

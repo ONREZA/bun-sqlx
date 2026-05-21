@@ -33,7 +33,7 @@ declare module "bun-sqlx" {
     "SELECT u.id AS uid, p.id AS pid FROM users u FULL OUTER JOIN posts p ON p.user_id = u.id WHERE u.id = $1 OR p.id = $1": { params: [bigint]; row: { "uid": bigint | null; "pid": bigint | null } };
     "SELECT u.id AS user_id, u.name, p.title, p.published FROM users u LEFT JOIN posts p ON p.user_id = u.id WHERE u.id = $1": { params: [bigint]; row: { "user_id": bigint; "name": string; "title": string | null; "published": boolean | null } };
     "SELECT u.id, p.title, p.body FROM users u LEFT JOIN posts p ON p.user_id = u.id WHERE p.body IS NOT NULL AND u.id = $1": { params: [bigint]; row: { "id": bigint; "title": string | null; "body": string } };
-    "UPDATE users SET settings = $1 WHERE id = $2 RETURNING id AS \"id!\", settings": { params: [BunSqlxJson.UserSettings, bigint]; row: { "id": bigint; "settings": BunSqlxJson.UserSettings | null } };
+    "UPDATE users SET settings = $1 WHERE id = $2 RETURNING id AS \"id!\", settings": { params: [BunSqlxJson.UserSettings, bigint]; row: { "id": bigint; "settings": BunSqlxJson.UserSettings } };
   }
 
   interface KnownFileQueries {

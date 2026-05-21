@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Cache, fingerprint } from "../src/cache";
 
@@ -80,6 +80,57 @@ test("Cache.prune with full keep removes nothing", () => {
   c.write("y", { query: "y", paramOids: [], paramTsTypes: [], columns: [], hasResultSet: false });
   expect(c.prune(["x", "y"])).toEqual([]);
   expect(c.list()).toHaveLength(2);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("Cache.read rejects legacy schema (forceNonNull) with actionable message", () => {
+  const dir = join(import.meta.dir, ".tmp-cache-legacy-read");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const fp = "legacy1";
+  writeFileSync(
+    join(dir, `${fp}.json`),
+    JSON.stringify({
+      query: "SELECT id FROM users",
+      paramOids: [],
+      paramTsTypes: [],
+      columns: [{ name: "id", typeOid: 20, tsType: "bigint", nullable: false, forceNonNull: true }],
+      hasResultSet: true,
+    }),
+  );
+  const c = new Cache(dir);
+  expect(() => c.read(fp)).toThrow(/older schema/);
+  expect(() => c.read(fp)).toThrow(/bun-sqlx prepare/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("Cache.list rejects legacy schema (forceNullable) with actionable message", () => {
+  const dir = join(import.meta.dir, ".tmp-cache-legacy-list");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `legacy2.json`),
+    JSON.stringify({
+      query: "SELECT name FROM t",
+      paramOids: [],
+      paramTsTypes: [],
+      columns: [{ name: "name", typeOid: 25, tsType: "string", nullable: true, forceNullable: true }],
+      hasResultSet: true,
+    }),
+  );
+  const c = new Cache(dir);
+  expect(() => c.list()).toThrow(/older schema/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("Cache.read includes file path when JSON is malformed", () => {
+  const dir = join(import.meta.dir, ".tmp-cache-bad-json");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const fp = "corrupt1";
+  writeFileSync(join(dir, `${fp}.json`), "{not json");
+  const c = new Cache(dir);
+  expect(() => c.read(fp)).toThrow(new RegExp(`${fp}\\.json`));
   rmSync(dir, { recursive: true, force: true });
 });
 

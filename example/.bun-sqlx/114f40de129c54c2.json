@@ -14,17 +14,13 @@
       "name": "id",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "bio",
       "typeOid": 25,
       "tsType": "string",
-      "nullable": true,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": true
     }
   ],
   "hasResultSet": true,

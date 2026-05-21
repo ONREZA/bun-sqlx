@@ -8,25 +8,19 @@
       "name": "one",
       "typeOid": 23,
       "tsType": "number",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "msg",
       "typeOid": 25,
       "tsType": "string",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     },
     {
       "name": "ts",
       "typeOid": 1184,
       "tsType": "Date",
-      "nullable": false,
-      "forceNonNull": false,
-      "forceNullable": false
+      "nullable": false
     }
   ],
   "hasResultSet": true,

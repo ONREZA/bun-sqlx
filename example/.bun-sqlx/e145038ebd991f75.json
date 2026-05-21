@@ -15,16 +15,14 @@
       "typeOid": 20,
       "tsType": "bigint",
       "nullable": false,
-      "forceNonNull": true,
-      "forceNullable": false
+      "override": "non-null"
     },
     {
       "name": "name",
       "typeOid": 25,
       "tsType": "string",
       "nullable": false,
-      "forceNonNull": true,
-      "forceNullable": false
+      "override": "non-null"
     }
   ],
   "hasResultSet": true,

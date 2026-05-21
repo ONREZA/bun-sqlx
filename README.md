@@ -50,7 +50,11 @@ bun add bun-sqlx
 ```bash
 # .env
 DATABASE_URL=postgres://user:password@localhost:5432/your_db
+# Or with TLS against managed Postgres:
+# DATABASE_URL=postgres://user:password@db.example.com:5432/your_db?sslmode=require
 ```
+
+Supported `sslmode` values: `disable`, `prefer` (default — try TLS, fall back to plaintext), `require` (TLS or fail), `verify-ca`, `verify-full`. `application_name` and `connect_timeout` are also honored when provided as URL parameters.
 
 ### 2. Create a migration
 
@@ -159,6 +163,8 @@ await sql("SELECT $1::text[] AS tags", ["alpha", "beta,gamma", "with \"quote\""]
 
 Encoding only kicks in when every element is a primitive (`string` / `number` / `bigint` / `boolean` / `null`). Arrays containing objects pass through unchanged — that's the path for `jsonb` columns whose value is a JSON array (`attachments: BunSqlxJson.Attachment[]`). If you need to store a primitive JS array as `jsonb` (rare), pass `JSON.stringify(arr)` explicitly. `encodePgArrayLiteral(arr)` is exported if you need the literal yourself for `unsafe(...)`.
 
+Empty arrays (`[]`) are passed straight through to `Bun.SQL` — the driver binds them as an empty PG array. If you need the literal `"{}"` instead (e.g. when concatenating into raw SQL), call `encodePgArrayLiteral([])`.
+
 ### Parameter nullability
 
 `prepare` infers param types as `T | null` when:
@@ -204,7 +210,19 @@ import { migrate } from "bun-sqlx";
 await migrate({ dir: "./migrations" });
 ```
 
-Options: `{ dir?: string; databaseUrl?: string; log?: (msg) => void }`.
+Options:
+
+```ts
+type MigrateOptions = {
+  dir?: string;
+  databaseUrl?: string;
+  log?: (msg: string) => void;
+  lockKey?: number | bigint;     // overrides DEFAULT_MIGRATE_LOCK_KEY
+  lockTimeoutMs?: number;        // pg_try_advisory_lock + polling; default: block
+};
+```
+
+When `lockTimeoutMs` is set, acquisition uses `pg_try_advisory_lock` in a polling loop and throws if not obtained within the timeout — useful for CI / multi-replica startup to avoid an indefinitely-blocked pod.
 
 ### `getClient()` / `setClient()` / `close()`
 
@@ -212,23 +230,62 @@ Low-level access to the underlying `Bun.SQL` instance, in case you need to manag
 
 ### `clearSqlFileCache()`
 
-Drops the in-memory cache used by `sql.file(...)`. Call this if you reload `.sql` files at runtime (rare; useful in tests).
+Drops the in-memory cache used by `sql.file(...)`. The cache invalidates automatically on file mtime change, so this is rarely needed manually.
+
+### Typed errors
+
+```ts
+import { NoRowsError, TooManyRowsError, PgError } from "bun-sqlx";
+
+try {
+  const u = await sql.one(`SELECT id FROM users WHERE id = $1`, 99);
+} catch (e) {
+  if (e instanceof NoRowsError) return null;
+  if (e instanceof TooManyRowsError) console.error("ambiguous query, got", e.actual);
+  if (e instanceof PgError) console.error("pg code:", e.code, "position:", e.position);
+  throw e;
+}
+```
+
+`sql.one` throws `NoRowsError` on 0 rows and `TooManyRowsError` (with `.actual`) on >1. `PgError` exposes `.code`, `.position`, `.hint`, `.detail`, `.severity`.
+
+### Transactions with options
+
+`sql.transaction(fn)` and `sql.transaction(opts, fn)`:
+
+```ts
+await sql.transaction({ isolation: "serializable", readOnly: true }, async (tx) => {
+  return await tx(`SELECT id FROM accounts WHERE owner = $1`, ownerId);
+});
+```
+
+Options: `{ isolation?: "read uncommitted" | "read committed" | "repeatable read" | "serializable"; readOnly?: boolean; deferrable?: boolean }`. Applied via `SET TRANSACTION` immediately after `BEGIN`.
+
+### Namespace imports
+
+In addition to `import { sql } from "bun-sqlx"`, the scanner now recognises `import * as ns from "bun-sqlx"` and validates `ns.sql(...)`, `ns.sql.one(...)`, `ns.sql.file(...)`, and `ns.sql.transaction(...)` exactly like the named-import form. Local re-declarations (`const sql = ...`, `const { sql } = ...`) correctly shadow the alias inside their scope.
 
 ## CLI
 
 ```
-bun-sqlx prepare [--check | --watch] [--root <dir>] [--no-prune]
-bun-sqlx migrate run | info | revert | add <name>
+bun-sqlx prepare [--check | --watch] [--root <dir>] [--dts <path>] [--no-prune]
+bun-sqlx migrate run [--lock-timeout <ms>] | info | revert | add <name> [--migrations <dir>]
+bun-sqlx --version | --help
 ```
 
-| Flag           | Meaning                                                      |
-|----------------|--------------------------------------------------------------|
-| `--check`      | Offline: verify cache matches sources, no database required. |
-| `--watch`      | Persistent connection, re-prepare on file change.            |
-| `--root <dir>` | Source/cache/migrations root (default: cwd).                 |
-| `--no-prune`   | Keep orphaned cache entries instead of removing them.        |
+| Flag                  | Meaning                                                                              |
+|-----------------------|--------------------------------------------------------------------------------------|
+| `--check`             | Offline: verify cache matches sources, no database required.                         |
+| `--watch`             | Persistent connection, re-prepare on file change.                                    |
+| `--root <dir>`        | Source/cache/migrations root (default: cwd).                                         |
+| `--dts <path>`        | Declarations output (default: `<root>/bun-sqlx-env.d.ts`).                           |
+| `--no-prune`          | Keep orphaned cache entries instead of removing them.                                |
+| `--migrations <dir>`  | Migrations directory (default: `<root>/migrations`).                                 |
+| `--lock-timeout <ms>` | Advisory-lock acquisition timeout for `migrate run` / `migrate revert`.              |
 
-`DATABASE_URL` must be set for any command that touches the database.
+All flags accept both `--flag value` and `--flag=value` forms.
+
+`DATABASE_URL` must be set for any command that touches the database. Supported URL search params: `sslmode`, `application_name`, `connect_timeout`.
 
 ### Error output
 
@@ -360,11 +417,23 @@ Releases are automated via `release-please`: pushes to `main` accumulate into a 
 - PostgreSQL only (no MySQL or SQLite).
 - `INSERT INTO t VALUES (...)` without an explicit column list isn't parameter-mapped.
 - `SELECT *` falls back to conservative nullability.
-- `RETURNING` clauses on `INSERT`/`UPDATE`/`DELETE` use the basic nullability path (no `WHERE` narrowing yet). Use `AS "id!"` aliases.
-- Composite and domain types resolve to `unknown`. Use `CAST` or alias-based typing.
+- Nested CTE references (CTE-`b` referencing CTE-`a` in the same `WITH`) and `WITH RECURSIVE` are not analysed transitively — at worst this produces extra `T | null`. Use `AS "id!"` overrides if needed.
+- Composite types resolve to `unknown`. Domains and array types of registered types resolve correctly.
+- Column names whose **real** name (not an alias) ends with `!` or `?` are not supported — the runtime strips those suffixes assuming an override. Use `AS "alias"` if you have such a column.
+- Migrations run inside `BEGIN/COMMIT`. DDL that disallows transactions (`CREATE INDEX CONCURRENTLY`, `VACUUM`, `REINDEX CONCURRENTLY`, …) will fail; split such operations into separate migrations executed outside the runner.
+- `parseDatabaseUrl` parses `sslmode`, `application_name`, and `connect_timeout` for the **internal** wire client (used by `migrate run`, `prepare`, and the runtime `migrate()` helper). The runtime `sql()` path delegates to `Bun.SQL`, which has its own TLS / connection-handling logic.
+- `connect_timeout` covers the TCP-connect phase only; TLS handshake and SCRAM authentication have no timeout.
 - `sql.file(path)` path is matched literally between scan time and runtime — they must agree on the working directory. Document a convention for your team (e.g. always run from the repo root).
 
 See [ROADMAP.md](./ROADMAP.md) for what's planned.
+
+## Upgrading
+
+### Cache schema change (pre-1.0)
+
+The `.bun-sqlx/<fingerprint>.json` entries dropped `forceNonNull`/`forceNullable` in favour of a single `override?: "non-null" | "nullable"` field. Cache files from the previous schema are rejected with a clear error pointing at the offending file. Delete `.bun-sqlx/` and re-run `bun-sqlx prepare` against your database — there's no data loss, the cache is regenerated.
+
+CI (`prepare --check`) will also fail loudly until the cache is regenerated; this is intentional so a stale schema can't silently emit incorrect `.d.ts`.
 
 ## License
 

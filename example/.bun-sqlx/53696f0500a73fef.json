@@ -20,17 +20,15 @@
       "name": "id",
       "typeOid": 20,
       "tsType": "bigint",
-      "nullable": true,
-      "forceNonNull": true,
-      "forceNullable": false
+      "nullable": false,
+      "override": "non-null"
     },
     {
       "name": "created_at",
       "typeOid": 1184,
       "tsType": "Date",
-      "nullable": true,
-      "forceNonNull": true,
-      "forceNullable": false
+      "nullable": false,
+      "override": "non-null"
     }
   ],
   "hasResultSet": true,

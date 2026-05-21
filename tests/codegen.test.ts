@@ -24,7 +24,7 @@ test("forceNonNull strips null from inferred-nullable column", () => {
       paramTsTypes: [],
       hasResultSet: true,
       columns: [
-        { name: "n", typeOid: 20, tsType: "bigint", nullable: true, forceNonNull: true, forceNullable: false },
+        { name: "n", typeOid: 20, tsType: "bigint", nullable: true, override: "non-null" },
       ],
     },
   ]);
@@ -40,7 +40,7 @@ test("forceNullable adds null to inferred-non-null column", () => {
       paramTsTypes: [],
       hasResultSet: true,
       columns: [
-        { name: "id", typeOid: 23, tsType: "number", nullable: false, forceNonNull: false, forceNullable: true },
+        { name: "id", typeOid: 23, tsType: "number", nullable: false, override: "nullable" },
       ],
     },
   ]);
@@ -55,7 +55,7 @@ test("force suffixes are stripped from emitted column name", () => {
       paramTsTypes: [],
       hasResultSet: true,
       columns: [
-        { name: "id", typeOid: 23, tsType: "number", nullable: true, forceNonNull: true, forceNullable: false },
+        { name: "id", typeOid: 23, tsType: "number", nullable: true, override: "non-null" },
       ],
     },
   ]);
@@ -84,8 +84,8 @@ test("non-nullable column stays non-null, nullable stays nullable when no overri
       paramTsTypes: [],
       hasResultSet: true,
       columns: [
-        { name: "id", typeOid: 23, tsType: "number", nullable: false, forceNonNull: false, forceNullable: false },
-        { name: "bio", typeOid: 25, tsType: "string", nullable: true, forceNonNull: false, forceNullable: false },
+        { name: "id", typeOid: 23, tsType: "number", nullable: false },
+        { name: "bio", typeOid: 25, tsType: "string", nullable: true },
       ],
     },
   ]);
@@ -103,7 +103,7 @@ test("entries with filePaths emit KnownFileQueries keyed by path", () => {
       hasInline: false,
       filePaths: ["queries/one.sql"],
       columns: [
-        { name: "?column?", typeOid: 23, tsType: "number", nullable: false, forceNonNull: false, forceNullable: false },
+        { name: "?column?", typeOid: 23, tsType: "number", nullable: false },
       ],
     },
   ]);
@@ -122,7 +122,7 @@ test("entries with both inline and file usage emit into both interfaces", () => 
       hasInline: true,
       filePaths: ["queries/users.sql"],
       columns: [
-        { name: "id", typeOid: 23, tsType: "number", nullable: false, forceNonNull: false, forceNullable: false },
+        { name: "id", typeOid: 23, tsType: "number", nullable: false },
       ],
     },
   ]);
@@ -177,7 +177,7 @@ test("force flags take precedence over schema-derived nullability", () => {
       paramTsTypes: [],
       hasResultSet: true,
       columns: [
-        { name: "bio", typeOid: 25, tsType: "string", nullable: true, forceNonNull: true, forceNullable: false },
+        { name: "bio", typeOid: 25, tsType: "string", nullable: true, override: "non-null" },
       ],
     },
   ]);
