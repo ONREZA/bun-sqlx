@@ -45,6 +45,15 @@ if (!haveDocker) {
     return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
   }
 
+  function schema(args: string[] = []): { code: number; stdout: string; stderr: string } {
+    const r = spawnSync(
+      "bun",
+      [join(repoRoot, "bin/bun-sqlx.ts"), "schema", ...args, "--root", tmp],
+      { env: { ...process.env, DATABASE_URL: dbUrl }, encoding: "utf8" },
+    );
+    return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  }
+
   function resetWorkspace() {
     rmSync(tmp, { recursive: true, force: true });
     mkdirSync(tmp, { recursive: true });
@@ -101,6 +110,17 @@ if (!haveDocker) {
     expect(dts).toContain("interface KnownQueries");
     expect(dts).toContain("SELECT id, name FROM tmp_users WHERE id = $1");
     expect(readdirSync(join(tmp, ".bun-sqlx")).filter((f) => f.endsWith(".json")).length).toBeGreaterThan(0);
+  });
+
+  test("prepare --shadow-url applies migrations before preparing", () => {
+    writeFile("a.ts",
+      "import { sql } from \"bun-sqlx\";\n" +
+      "await sql(\"SELECT id, name FROM tmp_users WHERE id = $1\", 1);\n",
+    );
+    const r = prepare(["--shadow-url", dbUrl]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("shadow:");
+    expect(r.stdout).toContain("prepared 1 unique query");
   });
 
   test("prepare prunes orphaned cache entries by default", () => {
@@ -166,6 +186,52 @@ if (!haveDocker) {
     const r = prepare();
     expect(r.code).not.toBe(0);
     expect(r.stderr + r.stdout).toMatch(/a\.ts:2:16.*nope\.sql/s);
+  });
+
+  test("schema dump/check writes snapshot and LLM manifest with constraints and functions", () => {
+    writeFile("migrations/0008_schema_contract.up.sql",
+      "CREATE TABLE IF NOT EXISTS tmp_contract_posts (\n" +
+      "  id BIGSERIAL PRIMARY KEY,\n" +
+      "  user_id BIGINT NOT NULL REFERENCES tmp_users(id) ON DELETE CASCADE,\n" +
+      "  rating INT CHECK (rating >= 0),\n" +
+      "  title TEXT NOT NULL UNIQUE\n" +
+      ");\n" +
+      "CREATE INDEX IF NOT EXISTS tmp_contract_posts_user_id_idx ON tmp_contract_posts(user_id);\n" +
+      "CREATE OR REPLACE FUNCTION tmp_contract_slug(value text) RETURNS text\n" +
+      "LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT lower(value) $$;\n" +
+      "CREATE SCHEMA IF NOT EXISTS pgx;\n" +
+      "CREATE TABLE IF NOT EXISTS pgx.keep_me (id INT PRIMARY KEY);\n",
+    );
+    writeFile("migrations/0008_schema_contract.down.sql",
+      "DROP FUNCTION IF EXISTS tmp_contract_slug(text);\n" +
+      "DROP TABLE IF EXISTS tmp_contract_posts;\n" +
+      "DROP SCHEMA IF EXISTS pgx CASCADE;\n",
+    );
+    const mig = migrate();
+    expect(mig.code).toBe(0);
+
+    const dump = schema(["dump"]);
+    expect(dump.code).toBe(0);
+    const raw = readFileSync(join(tmp, ".bun-sqlx/schema/schema.json"), "utf8");
+    const snapshot = JSON.parse(raw) as {
+      relations: { schema: string; name: string; constraints: { kind: string; references?: { table: string } }[]; indexes: { name: string }[] }[];
+      functions: { name: string; volatility: string; strict: boolean }[];
+    };
+    const rel = snapshot.relations.find((r) => r.name === "tmp_contract_posts");
+    expect(rel).toBeTruthy();
+    expect(snapshot.relations.some((r) => r.name === "keep_me" && r.schema === "pgx")).toBe(true);
+    expect(rel!.constraints.some((c) => c.kind === "foreign_key" && c.references?.table === "tmp_users")).toBe(true);
+    expect(rel!.constraints.some((c) => c.kind === "check")).toBe(true);
+    expect(rel!.indexes.some((i) => i.name === "tmp_contract_posts_user_id_idx")).toBe(true);
+    expect(snapshot.functions.some((f) => f.name === "tmp_contract_slug" && f.volatility === "immutable" && f.strict)).toBe(true);
+
+    const manifest = readFileSync(join(tmp, ".bun-sqlx/schema/schema.md"), "utf8");
+    expect(manifest).toContain("tmp_contract_posts");
+    expect(manifest).toContain("tmp_contract_slug(value text) -> text");
+
+    const check = schema(["check"]);
+    expect(check.code).toBe(0);
+    expect(check.stdout).toContain("schema: ok");
   });
 
   test("built-in extension types resolve via the registry", () => {

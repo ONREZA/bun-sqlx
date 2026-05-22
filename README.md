@@ -34,6 +34,9 @@ const rows = await sql(
 - **Linear migrations** with hash tampering detection.
 - **Runtime `migrate()`** with PostgreSQL advisory lock, safe for multi-replica startup.
 - **Offline cache** committed to your repo. CI verifies via `prepare --check` without a database.
+- **Schema snapshot + LLM manifest** via `schema dump` / `schema check`: tables, columns, constraints, indexes, types, and function/procedure metadata are introspected from PostgreSQL.
+- **Shadow database validation** via `--shadow-url` / `SHADOW_DATABASE_URL`: apply migrations to a throwaway DB, then prepare or introspect against it.
+- **Safe identifier quoting** via `sql.id(...)`, backed by the committed schema snapshot whitelist.
 - **Watch mode**: ~15ms incremental re-prepare on file change.
 - **Cache pruning** removes orphaned entries automatically (toggleable with `--no-prune`).
 
@@ -200,6 +203,19 @@ If the callback throws, the transaction is rolled back. The return value of the 
 
 Same runtime as `sql` but without type-checking. For dynamic SQL where compile-time validation isn't possible.
 
+### `sql.id(...parts)` / `id(...parts)`
+
+Quote a dynamic identifier only if it exists in the generated schema snapshot. This is for the narrow cases where a table, column, function, type, index, or constraint name must be chosen dynamically.
+
+```ts
+import { unsafe, sql } from "bun-sqlx";
+
+const orderBy = sql.id("users", "created_at");
+await unsafe(`SELECT id, email FROM ${sql.id("users")} ORDER BY ${orderBy} DESC`);
+```
+
+The default snapshot path is `.bun-sqlx/schema/schema.json`. Override it at runtime with `BUN_SQLX_SCHEMA_PATH`. Pass schema-qualified identifiers as separate segments: `sql.id("public", "users")`, not `sql.id("public.users")`.
+
 ### `migrate(options)`
 
 Apply pending migrations from application startup with a PostgreSQL advisory lock. Safe to call from multiple replicas.
@@ -268,8 +284,9 @@ In addition to `import { sql } from "bun-sqlx"`, the scanner now recognises `imp
 ## CLI
 
 ```
-bun-sqlx prepare [--check | --watch] [--root <dir>] [--dts <path>] [--no-prune]
+bun-sqlx prepare [--check | --watch] [--root <dir>] [--dts <path>] [--no-prune] [--shadow-url <url>]
 bun-sqlx migrate run [--lock-timeout <ms>] | info | revert | add <name> [--migrations <dir>]
+bun-sqlx schema dump | check [--schema <path>] [--manifest <path>] [--no-manifest] [--shadow-url <url>]
 bun-sqlx --version | --help
 ```
 
@@ -282,10 +299,23 @@ bun-sqlx --version | --help
 | `--no-prune`          | Keep orphaned cache entries instead of removing them.                                |
 | `--migrations <dir>`  | Migrations directory (default: `<root>/migrations`).                                 |
 | `--lock-timeout <ms>` | Advisory-lock acquisition timeout for `migrate run` / `migrate revert`.              |
+| `--shadow-url <url>`  | Apply migrations to this database, then prepare/introspect against it.               |
+| `--schema <path>`     | Schema snapshot path (default: `<root>/.bun-sqlx/schema/schema.json`).               |
+| `--manifest <path>`   | LLM schema manifest path (default: `<root>/.bun-sqlx/schema/schema.md`).             |
+| `--no-manifest`       | Skip writing the LLM schema manifest during `schema dump`.                           |
 
 All flags accept both `--flag value` and `--flag=value` forms.
 
-`DATABASE_URL` must be set for any command that touches the database. Supported URL search params: `sslmode`, `application_name`, `connect_timeout`.
+`DATABASE_URL` must be set for any command that touches the database, unless `--shadow-url` or `SHADOW_DATABASE_URL` is provided for that command. Supported URL search params: `sslmode`, `application_name`, `connect_timeout`.
+
+### Schema snapshot and manifest
+
+`schema dump` introspects PostgreSQL and writes two generated files:
+
+- `.bun-sqlx/schema/schema.json` — machine-readable contract for runtime identifier whitelisting and CI drift checks.
+- `.bun-sqlx/schema/schema.md` — compact LLM-facing manifest with tables, columns, constraints, indexes, types, and functions.
+
+`schema check` re-introspects the database and fails if the committed snapshot is stale. With `--shadow-url`, both `prepare` and `schema dump/check` first apply pending migrations to the shadow database, then use that database as the source of truth. In watch mode, pending shadow migrations are checked before every re-prepare; when a migration is applied, the prepare session is reopened so schema metadata is not reused across DDL changes.
 
 ### Error output
 
@@ -393,11 +423,12 @@ Commit the generated `bun-sqlx.d.ts` and the `.bun-sqlx/` cache directory to you
 ```yaml
 - run: bun install
 - run: bun-sqlx prepare --check   # fails if any query is missing from cache
+- run: bun-sqlx schema check      # fails if the committed schema snapshot is stale
 - run: tsc --noEmit               # fails if types are stale
 - run: bun test
 ```
 
-The `--check` step runs without a database — your offline cache is the source of truth.
+The `prepare --check` step runs without a database — your offline cache is the source of truth. `schema check` intentionally uses a live or shadow database because it verifies the committed schema contract against PostgreSQL.
 
 ## Contributing
 

@@ -23,6 +23,7 @@ export type TypedSql = {
   one: <Q extends keyof KnownQueries>(query: Q, ...params: ParamsOf<KnownQueries[Q]>) => Promise<RowOf<KnownQueries[Q]>>;
   optional: <Q extends keyof KnownQueries>(query: Q, ...params: ParamsOf<KnownQueries[Q]>) => Promise<RowOf<KnownQueries[Q]> | null>;
   file: TypedFile;
+  id: (...parts: string[]) => string;
 };
 
 export type Typed = TypedSql & {
@@ -42,3 +43,4 @@ export const close = rt.close;
 export const migrate = rt.migrate;
 export const clearSqlFileCache = rt.clearSqlFileCache;
 export const encodePgArrayLiteral = rt.encodePgArrayLiteral;
+export const id = rt.id;

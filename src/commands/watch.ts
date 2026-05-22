@@ -1,21 +1,60 @@
 import { watch as fsWatch } from "node:fs";
 import { basename } from "node:path";
-import { openSession, prepareOnce, type PrepareOptions } from "./prepare";
+import { openSession, prepareOnce, type PrepareOptions, type PrepareSession } from "./prepare";
 
 const EXT_RE = /\.(ts|tsx|mts|cts|sql)$/;
 const SKIP_DIRS = ["node_modules", ".git", ".bun-sqlx", "dist", "build", ".next"];
 const DEBOUNCE_MS = 150;
 
-export async function runWatch(opts: PrepareOptions): Promise<void> {
-  const session = await openSession(opts);
+export type WatchPrepareHookResult = {
+  resetSession?: boolean;
+};
 
+export type WatchOptions = PrepareOptions & {
+  beforePrepare?: () => Promise<WatchPrepareHookResult | void>;
+};
+
+export type WatchState = {
+  session: PrepareSession | null;
+};
+
+type WatchDeps = {
+  openSession: typeof openSession;
+  prepareOnce: typeof prepareOnce;
+};
+
+const DEFAULT_DEPS: WatchDeps = { openSession, prepareOnce };
+
+async function closeSession(session: PrepareSession | null): Promise<void> {
+  if (!session) return;
+  try { await session.client.end(); } catch {}
+}
+
+export async function prepareWatchedOnce(
+  opts: WatchOptions,
+  state: WatchState,
+  log: (msg: string) => void,
+  err: (msg: string) => void,
+  deps: WatchDeps = DEFAULT_DEPS,
+): Promise<{ entries: number; failures: number; pruned: number }> {
+  const hookResult = await opts.beforePrepare?.();
+  if (hookResult?.resetSession === true) {
+    await closeSession(state.session);
+    state.session = null;
+  }
+  if (!state.session) state.session = await deps.openSession(opts);
+  return await deps.prepareOnce(opts, state.session, log, err);
+}
+
+export async function runWatch(opts: WatchOptions): Promise<void> {
   const stamp = () => new Date().toTimeString().slice(0, 8);
   const log = (m: string) => console.log(`[${stamp()}] ${m}`);
   const err = (m: string) => console.error(`[${stamp()}] ${m}`);
+  const state: WatchState = { session: null };
 
   log("watch: initial prepare");
   try {
-    const r = await prepareOnce(opts, session, log, err);
+    const r = await prepareWatchedOnce(opts, state, log, err);
     log(`watch: ready — ${r.entries} queries, ${r.failures} failures`);
   } catch (e) {
     err(`watch: initial prepare failed — ${(e as Error).message}`);
@@ -37,7 +76,7 @@ export async function runWatch(opts: PrepareOptions): Promise<void> {
       const start = Date.now();
       running = (async () => {
         try {
-          const r = await prepareOnce(opts, session, log, err);
+          const r = await prepareWatchedOnce(opts, state, log, err);
           log(`watch: re-prepared in ${Date.now() - start}ms (${r.entries} queries, ${r.failures} failures)`);
         } catch (e) {
           err(`watch: prepare error — ${(e as Error).message}`);
@@ -67,7 +106,7 @@ export async function runWatch(opts: PrepareOptions): Promise<void> {
     console.log();
     log("watch: stopping");
     watcher.close();
-    try { await session.client.end(); } catch {}
+    await closeSession(state.session);
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

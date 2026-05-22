@@ -1,5 +1,5 @@
 import { SQL } from "bun";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { PgClient, parseDatabaseUrl } from "./pg/wire";
 import { applyPending, acquireMigrateLock, releaseMigrateLock, DEFAULT_MIGRATE_LOCK_KEY } from "./commands/migrate";
@@ -29,6 +29,7 @@ export async function close(): Promise<void> {
 type AnyFn = (...args: unknown[]) => Promise<unknown[]>;
 type AnyOneFn = (...args: unknown[]) => Promise<unknown>;
 type AnyOptionalFn = (...args: unknown[]) => Promise<unknown | null>;
+type IdentifierFn = (...parts: string[]) => string;
 
 const SUFFIX = /[!?]$/;
 
@@ -122,6 +123,7 @@ export const _internal = {
   isPrimitiveArrayElement,
   loadSqlFile,
   buildSetTransaction,
+  clearIdentifierCache,
 };
 
 async function runQuery(client: SQL, query: string, params: unknown[]): Promise<unknown[]> {
@@ -166,8 +168,132 @@ export function clearSqlFileCache(): void {
   sqlFileCache.clear();
 }
 
+type IdentifierWhitelist = {
+  names: Set<string>;
+  paths: Set<string>;
+};
+
+type IdentifierCacheEntry = {
+  path: string;
+  mtimeMs: number;
+  size: number;
+  whitelist: IdentifierWhitelist;
+};
+
+let identifierCache: IdentifierCacheEntry | null = null;
+
+function clearIdentifierCache(): void {
+  identifierCache = null;
+}
+
+function identifierSnapshotPath(): string {
+  return process.env.BUN_SQLX_SCHEMA_PATH
+    ? resolve(process.cwd(), process.env.BUN_SQLX_SCHEMA_PATH)
+    : resolve(process.cwd(), ".bun-sqlx/schema/schema.json");
+}
+
+function addPath(whitelist: IdentifierWhitelist, parts: string[]): void {
+  for (const part of parts) whitelist.names.add(part);
+  whitelist.paths.add(parts.join("\0"));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function arrayProp(obj: Record<string, unknown> | null, key: string): unknown[] {
+  const value = obj?.[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function stringProp(obj: Record<string, unknown> | null, key: string): string | undefined {
+  const value = obj?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function buildIdentifierWhitelist(snapshot: unknown): IdentifierWhitelist {
+  const whitelist: IdentifierWhitelist = { names: new Set(), paths: new Set() };
+  const root = asRecord(snapshot);
+  for (const schema of arrayProp(root, "schemas")) {
+    if (typeof schema === "string") whitelist.names.add(schema);
+  }
+  for (const relRaw of arrayProp(root, "relations")) {
+    const rel = asRecord(relRaw);
+    const schema = stringProp(rel, "schema");
+    const name = stringProp(rel, "name");
+    if (!schema || !name) continue;
+    addPath(whitelist, [schema, name]);
+    for (const colRaw of arrayProp(rel, "columns")) {
+      const colName = stringProp(asRecord(colRaw), "name");
+      if (!colName) continue;
+      whitelist.names.add(colName);
+      addPath(whitelist, [name, colName]);
+      addPath(whitelist, [schema, name, colName]);
+    }
+    for (const idxRaw of arrayProp(rel, "indexes")) {
+      const idxName = stringProp(asRecord(idxRaw), "name");
+      if (idxName) addPath(whitelist, [schema, idxName]);
+    }
+    for (const constraintRaw of arrayProp(rel, "constraints")) {
+      const constraintName = stringProp(asRecord(constraintRaw), "name");
+      if (constraintName) {
+        addPath(whitelist, [schema, constraintName]);
+        addPath(whitelist, [name, constraintName]);
+        addPath(whitelist, [schema, name, constraintName]);
+      }
+    }
+  }
+  for (const typeRaw of arrayProp(root, "types")) {
+    const t = asRecord(typeRaw);
+    const schema = stringProp(t, "schema");
+    const name = stringProp(t, "name");
+    if (schema && name) addPath(whitelist, [schema, name]);
+  }
+  for (const fnRaw of arrayProp(root, "functions")) {
+    const fn = asRecord(fnRaw);
+    const schema = stringProp(fn, "schema");
+    const name = stringProp(fn, "name");
+    if (schema && name) addPath(whitelist, [schema, name]);
+  }
+  return whitelist;
+}
+
+function loadIdentifierWhitelist(): IdentifierWhitelist {
+  const path = identifierSnapshotPath();
+  if (!existsSync(path)) {
+    throw new Error(`bun-sqlx.id: schema snapshot not found at ${path}. Run \`bun-sqlx schema dump\`.`);
+  }
+  const st = statSync(path);
+  if (identifierCache && identifierCache.path === path && identifierCache.mtimeMs === st.mtimeMs && identifierCache.size === st.size) {
+    return identifierCache.whitelist;
+  }
+  const snapshot = JSON.parse(readFileSync(path, "utf8"));
+  const whitelist = buildIdentifierWhitelist(snapshot);
+  identifierCache = { path, mtimeMs: st.mtimeMs, size: st.size, whitelist };
+  return whitelist;
+}
+
+function quoteIdentifier(part: string): string {
+  if (part.length === 0) throw new Error("bun-sqlx.id: identifier segment must not be empty");
+  if (part.includes("\0")) throw new Error("bun-sqlx.id: identifier segment must not contain NUL");
+  return `"${part.replace(/"/g, '""')}"`;
+}
+
+export function id(...parts: string[]): string {
+  if (parts.length === 0) throw new Error("bun-sqlx.id: at least one identifier segment is required");
+  if (parts.length > 3) throw new Error("bun-sqlx.id: expected 1 to 3 identifier segments");
+  const whitelist = loadIdentifierWhitelist();
+  const ok = parts.length === 1
+    ? whitelist.names.has(parts[0]!)
+    : whitelist.paths.has(parts.join("\0"));
+  if (!ok) {
+    throw new Error(`bun-sqlx.id: identifier is not present in schema snapshot: ${parts.join(".")}`);
+  }
+  return parts.map(quoteIdentifier).join(".");
+}
+
 type FileCallable = AnyFn & { one: AnyOneFn; optional: AnyOptionalFn };
-type SqlCallable = AnyFn & { file: FileCallable; one: AnyOneFn; optional: AnyOptionalFn };
+type SqlCallable = AnyFn & { file: FileCallable; one: AnyOneFn; optional: AnyOptionalFn; id: IdentifierFn };
 
 function makeBoundCallable(client: SQL): SqlCallable {
   const fn: AnyFn = (async (query: string, ...params: unknown[]) => {
@@ -189,6 +315,7 @@ function makeBoundCallable(client: SQL): SqlCallable {
   (fn as SqlCallable).optional = (async (query: string, ...params: unknown[]) => {
     return runOptional(client, query, params);
   }) as AnyOptionalFn;
+  (fn as SqlCallable).id = id;
   return fn as SqlCallable;
 }
 
@@ -226,6 +353,7 @@ root.one = (async (query: string, ...params: unknown[]) => {
 root.optional = (async (query: string, ...params: unknown[]) => {
   return runOptional(getClient(), query, params);
 }) as AnyOptionalFn;
+root.id = id;
 
 function buildSetTransaction(opts: TransactionOptions): string {
   const parts: string[] = [];

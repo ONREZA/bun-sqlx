@@ -6,6 +6,7 @@ import {
   _internal,
   clearSqlFileCache,
   encodePgArrayLiteral,
+  id,
   NoRowsError,
   TooManyRowsError,
 } from "../src/runtime";
@@ -123,5 +124,58 @@ describe("loadSqlFile + mtime cache", () => {
   test("missing file throws with path context", () => {
     expect(() => _internal.loadSqlFile("/tmp/bun-sqlx-does-not-exist.sql"))
       .toThrow(/bun-sqlx\.sql\.file: cannot read \/tmp\/bun-sqlx-does-not-exist\.sql/);
+  });
+});
+
+describe("id", () => {
+  test("quotes only identifiers present in the schema snapshot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bun-sqlx-id-"));
+    const path = join(dir, "schema.json");
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      schemas: ["app", "public"],
+      relations: [
+        {
+          schema: "public",
+          name: "users",
+          kind: "table",
+          columns: [
+            { name: "id", ordinal: 1, type: "bigint", typeOid: 20, nullable: false, writable: false, identity: "always" },
+            { name: "email", ordinal: 2, type: "text", typeOid: 25, nullable: false, writable: true },
+          ],
+          constraints: [],
+          indexes: [],
+        },
+        {
+          schema: "app",
+          name: "posts",
+          kind: "table",
+          columns: [
+            { name: "id", ordinal: 1, type: "bigint", typeOid: 20, nullable: false, writable: false, identity: "always" },
+          ],
+          constraints: [{ name: "posts_pkey", kind: "primary_key", columns: ["id"], definition: "PRIMARY KEY (id)" }],
+          indexes: [{ name: "posts_user_id_idx", unique: false, primary: false, method: "btree", columns: ["id"], definition: "" }],
+        },
+      ],
+      types: [],
+      functions: [],
+    }));
+    const prev = process.env.BUN_SQLX_SCHEMA_PATH;
+    process.env.BUN_SQLX_SCHEMA_PATH = path;
+    _internal.clearIdentifierCache();
+    try {
+      expect(id("users")).toBe('"users"');
+      expect(id("public", "users")).toBe('"public"."users"');
+      expect(id("users", "email")).toBe('"users"."email"');
+      expect(id("public", "users", "email")).toBe('"public"."users"."email"');
+      expect(id("app", "posts_user_id_idx")).toBe('"app"."posts_user_id_idx"');
+      expect(id("app", "posts", "posts_pkey")).toBe('"app"."posts"."posts_pkey"');
+      expect(() => id("users; DROP TABLE users")).toThrow(/not present/);
+      expect(() => id("public", "users", "missing")).toThrow(/not present/);
+    } finally {
+      if (prev === undefined) delete process.env.BUN_SQLX_SCHEMA_PATH;
+      else process.env.BUN_SQLX_SCHEMA_PATH = prev;
+      _internal.clearIdentifierCache();
+    }
   });
 });

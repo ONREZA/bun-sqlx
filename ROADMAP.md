@@ -18,13 +18,11 @@ Items already shipped live in the [README](./README.md) feature list; this file 
 | MySQL backend | 5 | `Bun.SQL` supports it, but MySQL has no `Describe Statement` equivalent. Would need a real SQL parser pass + `INFORMATION_SCHEMA` introspection. |
 | SQLite backend | 4 | SQLite's column types are dynamic. Would require running `EXPLAIN` and a heuristic mapper, or schema-driven inference per-statement. |
 | `EXPLAIN`-based performance hints | 6 | `prepare` could optionally run `EXPLAIN` per query and surface seq-scan / missing-index warnings. Independent feature; pairs well with CI. |
-| Safe identifier interpolation (`sql.id(table)`) | 4 | Today dynamic identifiers force `unsafe`. A whitelist-checked helper would cover safe dynamic table/column names. |
 | `NOT (col IS NULL)` narrowing | 2 | Symmetric inversion in WHERE walker. Niche pattern. |
 | Multi-statement queries | 2 | One SQL string with multiple statements separated by `;`. PG's `Parse` is single-statement; this would require client-side splitting. |
 | Migration `down` reversal dry-run | 3 | Apply `down`, diff schema, compare to pre-`up` snapshot. Useful for catching irreversible migrations. |
 | Stored procedure / function typing | 3 | `CALL proc(...)` and `SELECT func(...)` with parameter and return-type binding from `pg_proc`. |
 | Streaming / cursor / COPY typing | 3 | Surface the cursor variants of `Bun.SQL` with proper row types. |
-| Shadow-database support for `prepare` | 5 | Some teams want `prepare` to target a stage / temp DB instead of `DATABASE_URL`. A `--shadow-url` flag or `SHADOW_DATABASE_URL` env. |
 
 ## Long-term
 
