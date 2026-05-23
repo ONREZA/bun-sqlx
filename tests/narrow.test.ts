@@ -22,6 +22,14 @@ test("equality narrows both sides when neither is NULL literal", async () => {
   expect(isNarrowed(set, undefined, "bio")).toBe(true);
 });
 
+test("IS NOT DISTINCT FROM propagates non-null through AND equality chains", async () => {
+  const set = narrowFromWhere(
+    await whereOf("SELECT id FROM users WHERE bio IS NOT DISTINCT FROM note AND note IS NOT NULL"),
+  );
+  expect(isNarrowed(set, undefined, "bio")).toBe(true);
+  expect(isNarrowed(set, undefined, "note")).toBe(true);
+});
+
 test("AND unions the narrowed sets", async () => {
   const set = narrowFromWhere(
     await whereOf("SELECT id FROM users WHERE bio IS NOT NULL AND age > 18"),

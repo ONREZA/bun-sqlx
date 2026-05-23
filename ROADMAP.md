@@ -8,9 +8,6 @@ Items already shipped live in the [README](./README.md) feature list; this file 
 |---------|-----|-------|
 | Composite & domain types | 6 | Resolve PG `CREATE TYPE foo AS (...)` and `CREATE DOMAIN` via `pg_type` recursion. Domain → base type's TS (`email DOMAIN AS text` → `string`). Composite → struct literal type. Currently both fall through to `unknown`. |
 | Self-join precision (unqualified ColumnRef) | 4 | `SELECT name FROM users u1 JOIN users u2 ON ...` with unqualified `name` can't be attributed to a specific alias. PG would reject ambiguous unqualified refs anyway, but explicit aliasing currently has no narrowing benefit in self-joins. |
-| Transitive equality narrowing | 4 | `WHERE a = b AND b IS NOT NULL` ⇒ `a IS NOT NULL`. Union-find over equality chains in WHERE. |
-| JOIN ON-clause narrowing | 4 | `INNER JOIN t ON t.k = u.k` guarantees `t.k` and `u.k` non-null. Today only `joinNullable` flips from the join type, not from the ON predicate. |
-| RETURNING analysis on DML | 5 | `INSERT INTO t (...) RETURNING ...` and `UPDATE ... RETURNING ...` currently use base nullability + alias overrides only. Should run the same scope + narrowing pipeline as `SELECT`. |
 | `INSERT INTO t VALUES (...)` without column list | 3 | Map params by `pg_attribute attnum` ordering. Rare in practice — most teams use explicit column lists. |
 | Tagged-template literal API (`` sql`SELECT ${x}` ``) | 8 | Restoring sqlx's inline-SQL aesthetic requires either a TS compiler plugin (`ts-patch`) or a Bun preload-time AST rewriter. TS itself hardcodes the first tag argument as `TemplateStringsArray` and refuses to narrow to literal tuples. Significant effort, large UX win. |
 | LSP server | 6 | Realtime diagnostics, hover with column types, autocomplete on schema names. Two-to-four weeks for beta, separate VS Code / Neovim extensions. Watch mode covers ~85% of the value today. |

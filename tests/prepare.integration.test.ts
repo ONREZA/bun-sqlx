@@ -63,9 +63,27 @@ if (!haveDocker) {
       "  id BIGSERIAL PRIMARY KEY,\n" +
       "  name TEXT NOT NULL,\n" +
       "  email TEXT NOT NULL\n" +
+      ");\n" +
+      "CREATE TABLE IF NOT EXISTS tmp_join_users (\n" +
+      "  id BIGSERIAL PRIMARY KEY,\n" +
+      "  external_id TEXT\n" +
+      ");\n" +
+      "CREATE TABLE IF NOT EXISTS tmp_join_posts (\n" +
+      "  id BIGSERIAL PRIMARY KEY,\n" +
+      "  user_external_id TEXT,\n" +
+      "  title TEXT NOT NULL\n" +
+      ");\n" +
+      "CREATE TABLE IF NOT EXISTS tmp_narrow_values (\n" +
+      "  a TEXT,\n" +
+      "  b TEXT\n" +
       ");\n",
     );
-    writeFile("migrations/0001_init.down.sql", "DROP TABLE IF EXISTS tmp_users;\n");
+    writeFile("migrations/0001_init.down.sql",
+      "DROP TABLE IF EXISTS tmp_narrow_values;\n" +
+      "DROP TABLE IF EXISTS tmp_join_posts;\n" +
+      "DROP TABLE IF EXISTS tmp_join_users;\n" +
+      "DROP TABLE IF EXISTS tmp_users;\n",
+    );
   }
 
   beforeAll(async () => {
@@ -358,6 +376,32 @@ if (!haveDocker) {
     expect(r.code).toBe(0);
     const dts = readFileSync(join(tmp, "bun-sqlx-env.d.ts"), "utf8");
     expect(dts).toMatch(/WHERE bio = \$1.*params: \[string\]/);
+  });
+
+  test("prepare emits non-null row types for equality chains and INNER JOIN ON", () => {
+    writeFile("a.ts",
+      "import { sql } from \"bun-sqlx\";\n" +
+      "await sql(\"SELECT u.external_id, p.user_external_id FROM tmp_join_users u JOIN tmp_join_posts p ON p.user_external_id = u.external_id\");\n" +
+      "await sql(\"SELECT a FROM tmp_narrow_values WHERE a IS NOT DISTINCT FROM b AND b IS NOT NULL\");\n",
+    );
+    const r = prepare();
+    expect(r.code).toBe(0);
+    const dts = readFileSync(join(tmp, "bun-sqlx-env.d.ts"), "utf8");
+    expect(dts).toContain('"external_id": string; "user_external_id": string');
+    expect(dts).toContain('"a": string');
+  });
+
+  test("prepare keeps outer-join rows nullable and sees DML RETURNING source scope", () => {
+    writeFile("a.ts",
+      "import { sql } from \"bun-sqlx\";\n" +
+      "await sql(\"SELECT p.user_external_id FROM tmp_join_users u LEFT JOIN tmp_join_posts p ON p.user_external_id = u.external_id\");\n" +
+      "await sql(\"DELETE FROM tmp_join_users u USING tmp_join_posts p WHERE p.user_external_id = u.external_id RETURNING p.title\");\n",
+    );
+    const r = prepare();
+    expect(r.code).toBe(0);
+    const dts = readFileSync(join(tmp, "bun-sqlx-env.d.ts"), "utf8");
+    expect(dts).toContain('"user_external_id": string | null');
+    expect(dts).toContain('"title": string');
   });
 
   test("sql.one and sql.optional reach KnownQueries via the scanner", () => {

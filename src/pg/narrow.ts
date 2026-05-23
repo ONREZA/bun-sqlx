@@ -1,36 +1,77 @@
 export type NonNullSet = Set<string>;
 
 const NULL_REJECTING_OPS = new Set(["=", "!=", "<>", "<", ">", "<=", ">="]);
+type EqualityEdge = readonly [string, string];
+type NarrowInfo = { forced: NonNullSet; equalities: EqualityEdge[] };
 
 export function narrowFromWhere(whereClause: any): NonNullSet {
   if (!whereClause) return new Set();
-  return walk(whereClause);
+  return walk(whereClause).forced;
 }
 
-function walk(node: any): NonNullSet {
-  if (!node) return new Set();
+function emptyInfo(): NarrowInfo {
+  return { forced: new Set(), equalities: [] };
+}
+
+function forcedInfo(keys: Iterable<string>): NarrowInfo {
+  return { forced: new Set(keys), equalities: [] };
+}
+
+function propagateEqualities(info: NarrowInfo): NarrowInfo {
+  if (info.forced.size === 0 || info.equalities.length === 0) return info;
+
+  const graph = new Map<string, Set<string>>();
+  for (const [left, right] of info.equalities) {
+    if (left === right) continue;
+    const l = graph.get(left) ?? new Set<string>();
+    l.add(right);
+    graph.set(left, l);
+    const r = graph.get(right) ?? new Set<string>();
+    r.add(left);
+    graph.set(right, r);
+  }
+
+  const forced = new Set(info.forced);
+  const queue = [...forced];
+  for (let i = 0; i < queue.length; i++) {
+    const current = queue[i]!;
+    for (const next of graph.get(current) ?? []) {
+      if (forced.has(next)) continue;
+      forced.add(next);
+      queue.push(next);
+    }
+  }
+  return { forced, equalities: info.equalities };
+}
+
+function walk(node: any): NarrowInfo {
+  if (!node) return emptyInfo();
 
   if (node.NullTest) {
     if (node.NullTest.nulltesttype === "IS_NOT_NULL") {
       const k = keyOfColumnRef(node.NullTest.arg);
-      return k ? new Set([k]) : new Set();
+      return k ? forcedInfo([k]) : emptyInfo();
     }
-    return new Set();
+    return emptyInfo();
   }
 
   if (node.BoolExpr) {
     const op = node.BoolExpr.boolop;
     const args = node.BoolExpr.args ?? [];
     if (op === "AND_EXPR") {
-      const out = new Set<string>();
-      for (const a of args) for (const k of walk(a)) out.add(k);
-      return out;
+      const out: NarrowInfo = { forced: new Set(), equalities: [] };
+      for (const a of args) {
+        const child = walk(a);
+        for (const k of child.forced) out.forced.add(k);
+        out.equalities.push(...child.equalities);
+      }
+      return propagateEqualities(out);
     }
     if (op === "OR_EXPR") {
-      if (args.length === 0) return new Set();
+      if (args.length === 0) return emptyInfo();
       let acc: NonNullSet | undefined;
       for (const a of args) {
-        const s = walk(a);
+        const s = walk(a).forced;
         if (!acc) acc = new Set(s);
         else {
           const next = new Set<string>();
@@ -38,33 +79,37 @@ function walk(node: any): NonNullSet {
           acc = next;
         }
       }
-      return acc ?? new Set();
+      return forcedInfo(acc ?? []);
     }
-    return new Set();
+    return emptyInfo();
   }
 
   if (node.A_Expr) {
     const e = node.A_Expr;
     const kind = e.kind;
     const opName = e.name?.[0]?.String?.sval;
+    const lk = keyOfColumnRef(e.lexpr);
+    const rk = keyOfColumnRef(e.rexpr);
     if (kind === "AEXPR_OP" && opName && NULL_REJECTING_OPS.has(opName)) {
       const out = new Set<string>();
-      const lk = keyOfColumnRef(e.lexpr);
-      const rk = keyOfColumnRef(e.rexpr);
       const lIsNull = isNullLiteral(e.lexpr);
       const rIsNull = isNullLiteral(e.rexpr);
       if (lk && !rIsNull) out.add(lk);
       if (rk && !lIsNull) out.add(rk);
-      return out;
+      const equalities: EqualityEdge[] = opName === "=" && lk && rk ? [[lk, rk]] : [];
+      return { forced: out, equalities };
+    }
+    if (kind === "AEXPR_NOT_DISTINCT" && opName === "=" && lk && rk) {
+      return { forced: new Set(), equalities: [[lk, rk]] };
     }
     if (kind === "AEXPR_IN" || kind === "AEXPR_LIKE" || kind === "AEXPR_ILIKE" || kind === "AEXPR_BETWEEN") {
       const k = keyOfColumnRef(e.lexpr);
-      return k ? new Set([k]) : new Set();
+      return k ? forcedInfo([k]) : emptyInfo();
     }
-    return new Set();
+    return emptyInfo();
   }
 
-  return new Set();
+  return emptyInfo();
 }
 
 function keyOfColumnRef(node: any): string | null {

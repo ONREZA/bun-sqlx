@@ -84,17 +84,25 @@ async function analyzeDml(
   if (returningList.length === 0 && rowDesc.length === 0) {
     return { perColumnNullable: [], referencedTables: tablesFromRelation(stmt.relation) };
   }
-  const fakeSelect: any = {
-    targetList: returningList,
-    fromClause: [{ RangeVar: stmt.relation }],
+  const fakeSelect = dmlAsSelect(stmt, kind, returningList);
+  const scope = await buildScope(fakeSelect, schema);
+  return runTargets(returningList, rowDesc, scope);
+}
+
+function dmlAsSelect(stmt: any, kind: "insert" | "update" | "delete", targetList: any[]): any {
+  const fromClause = stmt.relation ? [{ RangeVar: stmt.relation }] : [];
+  if (kind === "update" && Array.isArray(stmt.fromClause)) {
+    fromClause.push(...stmt.fromClause);
+  }
+  if (kind === "delete" && Array.isArray(stmt.usingClause)) {
+    fromClause.push(...stmt.usingClause);
+  }
+  return {
+    targetList,
+    fromClause,
     whereClause: kind === "update" || kind === "delete" ? stmt.whereClause : undefined,
     withClause: stmt.withClause,
   };
-  if (kind === "update" && Array.isArray(stmt.fromClause)) {
-    fakeSelect.fromClause = [{ RangeVar: stmt.relation }, ...stmt.fromClause];
-  }
-  const scope = await buildScope(fakeSelect, schema);
-  return runTargets(returningList, rowDesc, scope);
 }
 
 function tablesFromRelation(relation: any): { schema?: string; name: string }[] {
@@ -168,24 +176,21 @@ async function analyzeCteColumns(cte: any, schema: SchemaCache): Promise<Map<str
   if (!inner) return result;
 
   let targetList: any[] | undefined;
+  let dmlKind: "insert" | "update" | "delete" | undefined;
   if (cte.ctequery?.SelectStmt) {
     targetList = inner.targetList;
   } else {
     targetList = inner.returningList ?? [];
+    if (cte.ctequery?.InsertStmt) dmlKind = "insert";
+    else if (cte.ctequery?.UpdateStmt) dmlKind = "update";
+    else if (cte.ctequery?.DeleteStmt) dmlKind = "delete";
   }
   if (!Array.isArray(targetList) || targetList.length === 0) return result;
 
   const isSelect = !!cte.ctequery?.SelectStmt;
   const scope = isSelect
     ? await buildScope(inner, schema)
-    : await buildScope(
-        {
-          targetList,
-          fromClause: [{ RangeVar: inner.relation }],
-          whereClause: inner.whereClause,
-        },
-        schema,
-      );
+    : await buildScope(dmlAsSelect(inner, dmlKind!, targetList), schema);
 
   for (let i = 0; i < targetList.length; i++) {
     const t = targetList[i];
@@ -244,6 +249,10 @@ function runTargets(
   return { perColumnNullable: nullables, referencedTables };
 }
 
+function addForcedNonNull(scope: Scope, set: NonNullSet): void {
+  for (const k of set) scope.forcedNonNull.add(k);
+}
+
 function computeTargetNullable(target: any, scope: Scope): boolean {
   const val = target?.ResTarget?.val;
   return expressionNullable(val, scope);
@@ -299,6 +308,9 @@ function walkFrom(node: any, joinNullable: boolean, scope: Scope): void {
     }
     walkFrom(j.larg, leftNullable, scope);
     walkFrom(j.rarg, rightNullable, scope);
+    if (j.jointype === "JOIN_INNER" && !joinNullable) {
+      addForcedNonNull(scope, narrowFromWhere(j.quals));
+    }
     return;
   }
   if (node.RangeSubselect) {

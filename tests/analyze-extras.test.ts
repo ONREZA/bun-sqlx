@@ -175,6 +175,73 @@ describe("analyze: subquery aliases", () => {
   });
 });
 
+describe("analyze: JOIN ON narrowing", () => {
+  test("INNER JOIN ON equality narrows nullable join keys", async () => {
+    const schema = fakeSchema([
+      {
+        name: "users",
+        oid: 16400,
+        columns: [{ name: "external_id", attno: 1, notNull: false }],
+      },
+      {
+        name: "posts",
+        oid: 16401,
+        columns: [{ name: "user_external_id", attno: 1, notNull: false }],
+      },
+    ]);
+    const sql = "SELECT u.external_id, p.user_external_id FROM users u JOIN posts p ON p.user_external_id = u.external_id";
+    const rd = rowDesc([
+      { name: "external_id", tableOid: 16400, attno: 1 },
+      { name: "user_external_id", tableOid: 16401, attno: 1 },
+    ]);
+    const result = await analyzeQuery(sql, rd, schema);
+    expect(result.perColumnNullable).toEqual([false, false]);
+  });
+
+  test("LEFT JOIN ON equality does not narrow the null-extended side", async () => {
+    const schema = fakeSchema([
+      {
+        name: "users",
+        oid: 16400,
+        columns: [{ name: "external_id", attno: 1, notNull: false }],
+      },
+      {
+        name: "posts",
+        oid: 16401,
+        columns: [{ name: "user_external_id", attno: 1, notNull: false }],
+      },
+    ]);
+    const sql = "SELECT p.user_external_id FROM users u LEFT JOIN posts p ON p.user_external_id = u.external_id";
+    const rd = rowDesc([{ name: "user_external_id", tableOid: 16401, attno: 1 }]);
+    const result = await analyzeQuery(sql, rd, schema);
+    expect(result.perColumnNullable[0]).toBe(true);
+  });
+
+  test("INNER JOIN ON inside a null-extended branch stays nullable", async () => {
+    const schema = fakeSchema([
+      {
+        name: "users",
+        oid: 16400,
+        columns: [{ name: "id", attno: 1, notNull: true }],
+      },
+      {
+        name: "posts",
+        oid: 16401,
+        columns: [{ name: "external_id", attno: 1, notNull: false }],
+      },
+      {
+        name: "comments",
+        oid: 16402,
+        columns: [{ name: "post_external_id", attno: 1, notNull: false }],
+      },
+    ]);
+    const sql = "SELECT p.external_id FROM users u LEFT JOIN (posts p JOIN comments c ON c.post_external_id = p.external_id) ON true";
+    const rd = rowDesc([{ name: "external_id", tableOid: 16401, attno: 1 }]);
+    const result = await analyzeQuery(sql, rd, schema);
+    expect(result.perColumnNullable[0]).toBe(true);
+  });
+});
+
 describe("analyze: RETURNING from DML", () => {
   test("INSERT ... RETURNING preserves NOT NULL of target columns", async () => {
     const schema = fakeSchema([{
@@ -227,5 +294,27 @@ describe("analyze: RETURNING from DML", () => {
     const result = await analyzeQuery(sql, rd, schema);
     expect(result.perColumnNullable[0]).toBe(false);
     expect(result.perColumnNullable[1]).toBe(true);
+  });
+
+  test("DELETE ... USING RETURNING includes USING table scope", async () => {
+    const schema = fakeSchema([
+      {
+        name: "users",
+        oid: 16400,
+        columns: [{ name: "id", attno: 1, notNull: true }],
+      },
+      {
+        name: "posts",
+        oid: 16401,
+        columns: [
+          { name: "title", attno: 1, notNull: true },
+          { name: "user_id", attno: 2, notNull: true },
+        ],
+      },
+    ]);
+    const sql = "DELETE FROM users u USING posts p WHERE p.user_id = u.id RETURNING p.title";
+    const rd = rowDesc([{ name: "title", tableOid: 16401, attno: 1 }]);
+    const result = await analyzeQuery(sql, rd, schema);
+    expect(result.perColumnNullable[0]).toBe(false);
   });
 });
